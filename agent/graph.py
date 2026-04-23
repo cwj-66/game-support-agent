@@ -3,31 +3,13 @@ LangGraph 主图定义
 Agent编排核心文件，定义节点顺序和条件边
 """
 
-from typing import Literal, Dict, Any
+from typing import Literal, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 
 from .state import AgentState
 from .nodes import reasoning_node, tool_exec_node, human_node
 from .checkpointer import get_checkpointer
-from human_in_loop.detector import InterruptDetector, InterruptDecision
-
-
-# 创建图构建器
-workflow = StateGraph(AgentState)
-
-
-# 注册节点
-workflow.add_node("reasoning", reasoning_node)
-workflow.add_node("tool_exec", tool_exec_node)
-workflow.add_node("detector", detector_node)
-workflow.add_node("generate", generate_response_node)
-workflow.add_node("human", human_node)
-workflow.add_node("finish", finish_node)
-
-
-# 定义边：起点 -> reasoning
-workflow.set_entry_point("reasoning")
+from human_in_loop.detector import InterruptDetector
 
 
 # 条件边：reasoning后决定是否需要工具
@@ -47,20 +29,6 @@ async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "detec
     return "detector"
 
 
-workflow.add_conditional_edges(
-    "reasoning",
-    route_from_reasoning,
-    {
-        "tool_exec": "tool_exec",
-        "detector": "detector"
-    }
-)
-
-
-# 边：tool_exec -> detector
-workflow.add_edge("tool_exec", "detector")
-
-
 # 条件边：detector后决定是否需要人工审核
 async def route_from_detector(state: AgentState) -> Literal["human", "generate"]:
     """
@@ -75,33 +43,6 @@ async def route_from_detector(state: AgentState) -> Literal["human", "generate"]
     if interrupt_info and interrupt_info.get("should_interrupt", False):
         return "human"
     return "generate"
-
-
-workflow.add_conditional_edges(
-    "detector",
-    route_from_detector,
-    {
-        "human": "human",
-        "generate": "generate"
-    }
-)
-
-
-# 边：human -> generate（审核后继续生成）
-workflow.add_edge("human", "generate")
-
-
-# 边：generate -> finish
-workflow.add_edge("generate", "finish")
-
-
-# 边：finish -> END
-workflow.add_edge("finish", END)
-
-
-# 编译图，配置checkpointer
-# MemorySaver支持断点恢复，是human-in-loop的基础
-graph = workflow.compile(checkpointer=get_checkpointer())
 
 
 # ============ 节点函数实现 ============
@@ -155,8 +96,6 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
     """
     from langchain_core.messages import AIMessage
     
-    user_query = state["user_query"]
-    messages = state["messages"]
     metadata = state.get("metadata", {})
     knowledge = metadata.get("knowledge_result", {})
     human_review = state.get("human_review")
@@ -195,6 +134,37 @@ async def finish_node(state: AgentState) -> Dict[str, Any]:
 
 
 # ============ 图执行入口 ============
+
+# 创建图构建器
+workflow = StateGraph(AgentState)
+
+# 注册节点
+workflow.add_node("reasoning", reasoning_node)
+workflow.add_node("tool_exec", tool_exec_node)
+workflow.add_node("detector", detector_node)
+workflow.add_node("generate", generate_response_node)
+workflow.add_node("human", human_node)
+workflow.add_node("finish", finish_node)
+
+# 定义边
+workflow.set_entry_point("reasoning")
+workflow.add_conditional_edges(
+    "reasoning",
+    route_from_reasoning,
+    {"tool_exec": "tool_exec", "detector": "detector"},
+)
+workflow.add_edge("tool_exec", "detector")
+workflow.add_conditional_edges(
+    "detector",
+    route_from_detector,
+    {"human": "human", "generate": "generate"},
+)
+workflow.add_edge("human", "generate")
+workflow.add_edge("generate", "finish")
+workflow.add_edge("finish", END)
+
+# 编译图，配置checkpointer
+graph = workflow.compile(checkpointer=get_checkpointer())
 
 async def run_agent(
     session_id: str,

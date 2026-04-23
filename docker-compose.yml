@@ -59,8 +59,10 @@ services:
       - PORT=8002
       - RAG_SERVICE_URL=http://rag-service:8000
       - MCP_SERVER_URL=http://mcp-server:8001
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - MODEL_NAME=${MODEL_NAME:-gpt-3.5-turbo}
+      - MODEL_NAME=${MODEL_NAME:-qwen-turbo}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - HIL_ENABLED=${HIL_ENABLED:-true}
       - HIL_CONFIDENCE_THRESHOLD=${HIL_CONFIDENCE_THRESHOLD:-0.6}
       - API_KEY=${API_KEY}

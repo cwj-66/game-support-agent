@@ -3,8 +3,7 @@
 使用pydantic-settings统一管理配置
 """
 
-import os
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -52,17 +51,21 @@ class Settings(BaseSettings):
         description="MCP SSE服务器地址"
     )
     
-    # LLM配置
+    # LLM配置（双通道：阿里云优先，OpenAI兜底）
+    DASHSCOPE_API_KEY: Optional[str] = Field(
+        default=None,
+        description="阿里云DashScope API Key"
+    )
     OPENAI_API_KEY: Optional[str] = Field(
         default=None,
-        description="OpenAI API Key（或其他LLM提供商）"
+        description="OpenAI API Key（兜底通道）"
     )
     MODEL_NAME: str = Field(
-        default="gpt-3.5-turbo",
+        default="qwen-turbo",
         description="使用的LLM模型"
     )
     LLM_BASE_URL: Optional[str] = Field(
-        default=None,
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
         description="LLM API基础URL（用于兼容第三方API）"
     )
     
@@ -118,3 +121,19 @@ def reload_settings():
     """重新加载配置（用于配置热更新）"""
     global _settings
     _settings = Settings()
+
+
+def get_llm_provider(settings: Optional[Settings] = None) -> Literal["dashscope", "openai"]:
+    """
+    获取当前可用的LLM提供商
+
+    优先级：
+    1. DASHSCOPE_API_KEY
+    2. OPENAI_API_KEY
+    """
+    cfg = settings or get_settings()
+    if cfg.DASHSCOPE_API_KEY:
+        return "dashscope"
+    if cfg.OPENAI_API_KEY:
+        return "openai"
+    raise ValueError("未配置LLM密钥：请设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")

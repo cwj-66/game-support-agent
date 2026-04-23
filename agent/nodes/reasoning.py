@@ -4,33 +4,75 @@ LLM 自主决策节点
 """
 
 import json
-from typing import Dict, Any
-from langchain_core.messages import AIMessage, SystemMessage
+from typing import Dict, Any, List
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field, ConfigDict
 
 from ..state import AgentState
 from ..prompts.system import GAME_SUPPORT_SYSTEM_PROMPT, build_reasoning_prompt
+from app.core.config import get_settings
 
 
-class ReasoningResult:
-    """推理结果数据结构"""
-    def __init__(
-        self,
-        intent: str,
-        need_tool: bool,
-        confidence: float,
-        has_sensitive: bool,
-        sensitive_words: list,
-        reasoning: str
-    ):
-        self.intent = intent
-        self.need_tool = need_tool
-        self.confidence = confidence
-        self.has_sensitive = has_sensitive
-        self.sensitive_words = sensitive_words
-        self.reasoning = reasoning
+class ReasoningOutputSchema(BaseModel):
+    """大模型结构化输出 Schema（严格）"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    intent: str = Field(..., min_length=1, description="用户意图")
+    need_tool: bool = Field(..., description="是否需要调用工具")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="置信度")
+    has_sensitive: bool = Field(..., description="是否包含敏感内容")
+    sensitive_words: List[str] = Field(default_factory=list, description="敏感词")
+    reasoning: str = Field(..., min_length=1, description="推理过程")
 
 
-async def reasoning_node(state: AgentState, llm) -> Dict[str, Any]:
+def _build_llm_from_settings() -> ChatOpenAI:
+    """
+    从 .env 配置创建大模型实例
+
+    规则：
+    - 优先使用阿里云：DASHSCOPE_API_KEY
+    - 其次使用 OpenAI：OPENAI_API_KEY
+    """
+    settings = get_settings()
+    model_name = settings.MODEL_NAME or "qwen-turbo"
+    base_url = settings.LLM_BASE_URL or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    if settings.DASHSCOPE_API_KEY:
+        return ChatOpenAI(
+            api_key=settings.DASHSCOPE_API_KEY,
+            model=model_name,
+            base_url=base_url,
+            temperature=0.2,
+        )
+
+    if settings.OPENAI_API_KEY:
+        return ChatOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            model=model_name,
+            base_url=base_url if settings.LLM_BASE_URL else None,
+            temperature=0.2,
+        )
+
+    raise ValueError("未配置 LLM 密钥，请在 .env 设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
+
+
+def _extract_json_block(content: str) -> Dict[str, Any]:
+    """从模型文本中提取 JSON（兼容 ```json ... ``` 包裹）"""
+    raw = content.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("{") and part.endswith("}"):
+                return json.loads(part)
+    return json.loads(raw)
+
+
+async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     """
     推理节点：分析用户意图并决策
     
@@ -42,13 +84,10 @@ async def reasoning_node(state: AgentState, llm) -> Dict[str, Any]:
     
     Args:
         state: 当前Agent状态
-        llm: LangChain LLM实例
-        
     Returns:
         状态更新字典
         
-    TODO: 
-    - 接入真实的LLM
+    TODO:
     - 添加工具选择逻辑（未来可能有多个工具）
     - 优化敏感词检测（与detector模块复用逻辑）
     """
@@ -62,31 +101,31 @@ async def reasoning_node(state: AgentState, llm) -> Dict[str, Any]:
     llm_messages = [
         SystemMessage(content=GAME_SUPPORT_SYSTEM_PROMPT),
         *messages,
-        # 添加推理指令
-        ("user", reasoning_prompt)
+        HumanMessage(content=reasoning_prompt),
     ]
-    
-    # 调用LLM进行推理
-    # TODO: 接入真实LLM
-    # response = await llm.ainvoke(llm_messages)
-    # 模拟推理结果（开发阶段占位）
-    mock_result = ReasoningResult(
-        intent="查询游戏机制",
-        need_tool=True,  # 假设需要查询知识库
-        confidence=0.75,
-        has_sensitive=False,
-        sensitive_words=[],
-        reasoning="用户询问具体游戏机制，需要查询知识库获取准确信息"
-    )
+
+    llm = _build_llm_from_settings()
+    try:
+        result = await analyze_intent_llm(llm, llm_messages, user_query)
+    except Exception as exc:
+        # LLM异常或JSON解析失败时，回退到保守默认值
+        result = ReasoningOutputSchema(
+            intent="查询游戏机制",
+            need_tool=True,
+            confidence=0.6,
+            has_sensitive=False,
+            sensitive_words=[],
+            reasoning=f"LLM解析失败，使用保守策略：优先走知识库，错误: {exc}",
+        )
     
     # 将推理结果存入metadata
     reasoning_data = {
-        "intent": mock_result.intent,
-        "need_tool": mock_result.need_tool,
-        "confidence": mock_result.confidence,
-        "has_sensitive": mock_result.has_sensitive,
-        "sensitive_words": mock_result.sensitive_words,
-        "reasoning": mock_result.reasoning,
+        "intent": result.intent,
+        "need_tool": result.need_tool,
+        "confidence": result.confidence,
+        "has_sensitive": result.has_sensitive,
+        "sensitive_words": result.sensitive_words,
+        "reasoning": result.reasoning,
         "node": "reasoning"
     }
     
@@ -96,24 +135,32 @@ async def reasoning_node(state: AgentState, llm) -> Dict[str, Any]:
     
     # 构建AI消息记录推理结果
     ai_message = AIMessage(
-        content=f"[推理] 意图：{mock_result.intent}，需要工具：{mock_result.need_tool}"
+        content=f"[推理] 意图：{result.intent}，需要工具：{result.need_tool}"
     )
     
     return {
         "messages": [ai_message],
         "metadata": metadata,
         # 标记是否需要工具调用（用于条件路由）
-        "_need_tool": mock_result.need_tool
+        "_need_tool": result.need_tool
     }
 
 
-async def analyze_intent_llm(llm, messages, user_query: str) -> ReasoningResult:
+async def analyze_intent_llm(
+    llm: ChatOpenAI,
+    messages,
+    user_query: str
+) -> ReasoningOutputSchema:
     """
-    使用LLM分析意图（真实实现时的函数）
-    
-    TODO: 
-    - 实现结构化输出（使用PydanticOutputParser）
-    - 处理LLM返回JSON解析失败的情况
-    - 添加重试逻辑
+    使用LLM分析意图（异步真实网络请求）
+
+    1. 向大模型发起 ainvoke 异步请求
+    2. 解析模型返回 JSON
+    3. 用 Pydantic 严格校验输出结构
     """
-    pass
+    response = await llm.ainvoke(messages)
+    if not isinstance(response.content, str):
+        raise ValueError(f"模型返回内容类型错误: {type(response.content)}")
+
+    payload = _extract_json_block(response.content)
+    return ReasoningOutputSchema.model_validate(payload)

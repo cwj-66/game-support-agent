@@ -3,12 +3,11 @@
 处理用户对话请求，调用Agent执行
 """
 
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 
 from app.core.config import get_settings, Settings
-from app.core.exceptions import AgentExecutionException, SessionNotFoundException
+from app.core.exceptions import AgentExecutionException
 from app.models.chat import ChatRequest, ChatResponse, ChatHistoryResponse
 from agent.graph import run_agent
 
