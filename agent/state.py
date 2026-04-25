@@ -6,7 +6,7 @@ LangGraph图的状态结构，包含消息、中断标记、人工审核结果�
 from typing import TypedDict, Annotated, List, Optional, Dict, Any, Literal
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 # 人工审核操作类型
@@ -53,6 +53,7 @@ class HumanReviewResult(TypedDict, total=False):
     approved: bool
 
 
+# LangGraph主状态定义
 class AgentState(TypedDict):
     """
     LangGraph 主状态定义
@@ -94,7 +95,7 @@ class AgentState(TypedDict):
     # 运行时元数据
     metadata: Dict[str, Any]
 
-
+# 创建对话初始状态
 def create_initial_state(session_id: str, user_query: str) -> AgentState:
     """
     创建初始状态
@@ -115,7 +116,7 @@ def create_initial_state(session_id: str, user_query: str) -> AgentState:
         "tool_calls": [],
         "final_response": None,
         "metadata": {
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "version": "1.0.0"
         }
     }
