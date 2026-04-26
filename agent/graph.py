@@ -3,7 +3,7 @@ LangGraph 主图定义
 Agent编排核心文件，定义节点顺序和条件边
 """
 
-from typing import Literal, Dict, Any, Optional
+from typing import Literal, Dict, Any, Optional, AsyncGenerator
 from langgraph.graph import StateGraph, END
 
 from .state import AgentState
@@ -209,9 +209,35 @@ async def run_agent(
         "session_id": session_id,
         "final_response": result.get("final_response"),
         "messages": result.get("messages", []),
-        "metadata": result.get("metadata", {})
+        "metadata": result.get("metadata", {}),
+        "interrupt_info": result.get("interrupt_info"),
     }
 
 
+async def stream_agent(
+    session_id: str,
+    user_query: str,
+    thread_id: Optional[str] = None,
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """
+    流式运行 Agent，逐节点产出状态更新
+
+    每个 chunk 格式：{"node_name": {state_updates}}
+    供 SSE 接口逐步推送给前端
+    """
+    from .state import create_initial_state
+
+    initial_state = create_initial_state(session_id, user_query)
+    config = {
+        "configurable": {
+            "thread_id": thread_id or session_id,
+            "checkpoint_ns": "game_support_agent",
+        }
+    }
+
+    async for chunk in graph.astream(initial_state, config, stream_mode="updates"):
+        yield chunk
+
+
 # 导出图实例
-__all__ = ["graph", "run_agent"]
+__all__ = ["graph", "run_agent", "stream_agent"]

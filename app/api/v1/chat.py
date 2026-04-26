@@ -3,112 +3,236 @@
 处理用户对话请求，调用Agent执行
 """
 
+import time
+import json
+from datetime import datetime
+from typing import AsyncGenerator
+
 from fastapi import APIRouter, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import HumanMessage, AIMessage
 
 from app.core.config import get_settings, Settings
-from app.core.exceptions import AgentExecutionException
-from app.models.chat import ChatRequest, ChatResponse, ChatHistoryResponse
-from agent.graph import run_agent
+from app.core.exceptions import AgentExecutionException, SessionNotFoundException
+from app.models.chat import (
+    ChatRequest,
+    ChatResponse,
+    ChatHistoryResponse,
+    ChatHistoryItem,
+)
+from agent.graph import run_agent, stream_agent
+from agent.checkpointer import get_checkpointer
+
+# 兼容不同版本 LangGraph 的 GraphInterrupt
+try:
+    from langgraph.errors import GraphInterrupt
+except ImportError:
+    GraphInterrupt = None
 
 
 router = APIRouter(prefix="/chat", tags=["对话"])
 
 
-# 发送对话消息的入口API
+def _node_to_progress(node_name: str) -> str:
+    """将节点名称映射为用户友好的进度描述"""
+    mapping = {
+        "reasoning": "正在分析您的问题...",
+        "tool_exec": "正在查询知识库...",
+        "detector": "正在进行安全检测...",
+        "human": "已转交人工审核，请稍候...",
+        "generate": "正在生成回复...",
+        "finish": "处理完成",
+    }
+    return mapping.get(node_name, "")
+
+
+# ──────────────────────────────────────────────
+# 优化 1 & 4：发送消息 + 人工审核中断检测 + 耗时统计 + 细化错误处理
+# ──────────────────────────────────────────────
 @router.post("/send", response_model=ChatResponse)
 async def send_message(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
-    settings: Settings = Depends(get_settings)
+    settings: Settings = Depends(get_settings),
 ) -> ChatResponse:
     """
     发送对话消息
-    
-    调用Agent处理用户消息，返回回复。
-    如果需要人工审核，返回review_id供后续查询。
-    
+
     流程：
     1. 接收用户消息
-    2. 创建或恢复Agent状态
-    3. 执行LangGraph
-    4. 检查是否需要人工审核
-    5. 返回响应或审核标记
+    2. 执行 LangGraph Agent
+    3. 检查是否触发 Human-in-the-loop 中断
+    4. 返回回复或审核等待标记，附带真实耗时
     """
+    start_time = time.perf_counter()
+
     try:
-        # 执行Agent智能体主流程
         result = await run_agent(
             session_id=request.session_id,
-            user_query=request.message
+            user_query=request.message,
         )
-        
-        # TODO: 检查是否需要人工审核
-        # 从result中获取interrupt_info判断
-        requires_review = False  # 占位
-        review_id = None
-        
+
+        execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+
+        # 检查是否触发了 human-in-loop 中断（detector 决策）
+        interrupt_info = result.get("interrupt_info")
+        requires_review = bool(interrupt_info and interrupt_info.get("should_interrupt"))
+        review_id = request.session_id if requires_review else None
+
         return ChatResponse(
             session_id=request.session_id,
-            response=result.get("final_response", ""),
+            response=(
+                result.get("final_response") or
+                ("您的消息涉及敏感操作，已转交人工客服处理，请稍候。" if requires_review else "")
+            ),
             requires_review=requires_review,
             review_id=review_id,
             sources=result.get("metadata", {}).get("sources"),
             metadata={
-                "execution_time_ms": 0,  # TODO: 真实耗时
-                "confidence": result.get("metadata", {}).get("confidence")
-            }
+                "execution_time_ms": execution_time_ms,
+                "confidence": result.get("metadata", {}).get("confidence"),
+            },
         )
-        
+
     except Exception as e:
+        # GraphInterrupt：图被 interrupt() 真实挂起（实装后触发）
+        if GraphInterrupt and isinstance(e, GraphInterrupt):
+            execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+            return ChatResponse(
+                session_id=request.session_id,
+                response="您的消息涉及敏感操作，已转交人工客服处理，请稍候。",
+                requires_review=True,
+                review_id=request.session_id,
+                metadata={"execution_time_ms": execution_time_ms},
+            )
         raise AgentExecutionException(str(e))
 
 
+# ──────────────────────────────────────────────
+# 优化 2：从 Checkpointer 读取真实历史记录
+# ──────────────────────────────────────────────
 @router.get("/history/{session_id}", response_model=ChatHistoryResponse)
 async def get_chat_history(
     session_id: str,
-    settings: Settings = Depends(get_settings)
+    settings: Settings = Depends(get_settings),
 ) -> ChatHistoryResponse:
     """
     获取对话历史
-    
-    返回指定会话的完整对话记录
+
+    从 LangGraph checkpointer 中读取指定会话的消息列表
     """
-    # TODO: 从checkpointer或数据库读取对话历史
-    # TODO: 检查session_id是否存在
-    
+    checkpointer = get_checkpointer()
+    config = {
+        "configurable": {
+            "thread_id": session_id,
+            "checkpoint_ns": "game_support_agent",
+        }
+    }
+
+    checkpoint_tuple = checkpointer.get_tuple(config)
+    if not checkpoint_tuple:
+        raise SessionNotFoundException(session_id)
+
+    channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
+    raw_messages = channel_values.get("messages", [])
+
+    # 使用 checkpoint 时间戳作为消息时间的参考值
+    checkpoint_ts = checkpoint_tuple.checkpoint.get("ts") or datetime.now().isoformat()
+
+    items: list[ChatHistoryItem] = []
+    for msg in raw_messages:
+        if isinstance(msg, HumanMessage):
+            role = "user"
+        elif isinstance(msg, AIMessage):
+            role = "assistant"
+        else:
+            # ToolMessage / SystemMessage 不在对话历史里展示
+            continue
+
+        items.append(
+            ChatHistoryItem(
+                role=role,
+                content=msg.content if isinstance(msg.content, str) else str(msg.content),
+                timestamp=checkpoint_ts,
+                requires_review=False,
+                reviewed=False,
+            )
+        )
+
     return ChatHistoryResponse(
         session_id=session_id,
-        messages=[],
-        total=0
+        messages=items,
+        total=len(items),
     )
 
 
+# ──────────────────────────────────────────────
+# 优化 3：真实流式输出（SSE）
+# ──────────────────────────────────────────────
 @router.post("/stream")
 async def stream_chat(
     request: ChatRequest,
-    settings: Settings = Depends(get_settings)
+    settings: Settings = Depends(get_settings),
 ):
     """
     流式对话（SSE）
-    
-    实时返回Agent思考过程和最终回复
-    
-    TODO: 实现真正的流式输出
+
+    逐节点推送 Agent 执行进度，最终推送完整回复。
+
+    事件格式（JSON）：
+    - {"type": "progress", "node": "...", "message": "..."}
+    - {"type": "done", "response": "..."}
+    - {"type": "error", "message": "..."}
     """
-    async def event_generator():
-        # 模拟流式输出
-        yield "data: 思考中...\n\n"
-        yield "data: 查询知识库...\n\n"
-        yield "data: 生成回复...\n\n"
-        yield "data: 完成\n\n"
-    
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        final_response = ""
+        try:
+            async for chunk in stream_agent(
+                session_id=request.session_id,
+                user_query=request.message,
+            ):
+                if not chunk:
+                    continue
+
+                node_name = next(iter(chunk))
+                node_updates = chunk[node_name]
+
+                # 更新当前最新的 final_response
+                if isinstance(node_updates, dict) and node_updates.get("final_response"):
+                    final_response = node_updates["final_response"]
+
+                # 推送节点进度
+                progress = _node_to_progress(node_name)
+                if progress:
+                    data = json.dumps(
+                        {"type": "progress", "node": node_name, "message": progress},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {data}\n\n"
+
+            # 所有节点执行完毕，推送最终回复
+            data = json.dumps(
+                {"type": "done", "response": final_response},
+                ensure_ascii=False,
+            )
+            yield f"data: {data}\n\n"
+
+        except Exception as e:
+            data = json.dumps(
+                {"type": "error", "message": str(e)},
+                ensure_ascii=False,
+            )
+            yield f"data: {data}\n\n"
+
     return StreamingResponse(
         event_generator(),
-        media_type="text/event-stream"
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
 # TODO: 未来扩展
-# - 添加会话创建API
+# - 添加会话创建API（POST /sessions）
 # - 添加会话结束/归档API
 # - 添加消息反馈API（点赞/点踩）
