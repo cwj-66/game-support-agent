@@ -5,7 +5,7 @@ RAG服务 HTTP 客户端封装
 
 import httpx
 from typing import Optional, List
-from .models import QueryRequest, QueryResponse, KnowledgeChunk, HealthResponse
+from .models import HealthResponse
 
 
 class RAGClient:
@@ -42,50 +42,48 @@ class RAGClient:
         return self._client
     
     async def query_knowledge(
-        self, 
-        question: str, 
+        self,
+        question: str,
         top_k: int = 3
-    ) -> QueryResponse:
+    ) -> dict:
         """
         查询RAG知识库
-        
+
         Args:
             question: 用户问题
             top_k: 返回结果数量
-            
+
         Returns:
-            QueryResponse: 结构化查询结果
-            
-        Raises:
-            RAGServiceError: RAG服务不可用或返回错误
+            包含 has_answer、answer、confidence、sources 的字典；
+            失败时返回含 error 字段的降级字典
         """
         client = await self._get_client()
-        
-        request = QueryRequest(question=question, top_k=top_k)
-        
-        # TODO: 实现重试逻辑
-        # TODO: 添加请求ID追踪
+        payload = {"question": question, "mode": "hybrid", "top_k": top_k}
+
         try:
             response = await client.post(
-                f"{self.base_url}/api/v1/query/",
-                json=request.model_dump(),
-                headers={"Content-Type": "application/json"}
+                f"{self.base_url}/query",
+                json=payload,
+                headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
-            
             data = response.json()
-            return QueryResponse(**data)
-            
-        except httpx.TimeoutException:
-            # TODO: 记录超时日志，返回降级响应
-            return QueryResponse(
-                query=question,
-                results=[],
-                has_answer=False
-            )
-        except httpx.HTTPStatusError as e:
-            # TODO: 根据状态码分类处理
-            raise RAGServiceError(f"RAG服务返回错误: {e.response.status_code}")
+
+            return {
+                "has_answer": True,
+                "answer": data.get("answer", ""),
+                "confidence": data.get("confidence", 0.0),
+                "sources": data.get("sources", []),
+            }
+
+        except Exception as e:
+            print(f"[RAGClient] 调用失败: {e}")
+            return {
+                "has_answer": False,
+                "error": str(e),
+                "message": "知识服务暂时不可用，建议转人工",
+                "confidence": 0.0,
+            }
     
     async def health_check(self) -> HealthResponse:
         """检查RAG服务健康状态"""

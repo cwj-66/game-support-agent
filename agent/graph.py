@@ -12,7 +12,7 @@ from .checkpointer import get_checkpointer
 from human_in_loop.detector import InterruptDetector
 
 
-# 条件边：reasoning后决定是否需要工具
+# 从reasoning节点的返回值，根据need_tool决定是否调用工具
 async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "detector"]:
     """
     从reasoning节点路由
@@ -29,7 +29,7 @@ async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "detec
     return "detector"
 
 
-# 条件边：detector后决定是否需要人工审核
+# 从detector节点的返回值，根据是否需要中断决定是否进入人工审核
 async def route_from_detector(state: AgentState) -> Literal["human", "generate"]:
     """
     从detector节点路由
@@ -47,6 +47,7 @@ async def route_from_detector(state: AgentState) -> Literal["human", "generate"]
 
 # ============ 节点函数实现 ============
 
+# 中断检测节点，检查是否需要触发human-in-loop
 async def detector_node(state: AgentState) -> Dict[str, Any]:
     """
     中断检测节点
@@ -61,13 +62,13 @@ async def detector_node(state: AgentState) -> Dict[str, Any]:
     metadata = state.get("metadata", {})
     reasoning = metadata.get("reasoning", {})
     
-    # 初始化检测器
+    # 初始化检测器，使用内置敏感词列表和置信度阈值
     detector = InterruptDetector(
         sensitive_words=["封号", "退款", "投诉", "举报", "盗号"],
         confidence_threshold=0.6
     )
     
-    # 执行检测
+    # 执行检测，检查是否需要触发human-in-loop
     decision = detector.detect(
         content=final_response,
         confidence=reasoning.get("confidence", 0.5),
@@ -86,6 +87,7 @@ async def detector_node(state: AgentState) -> Dict[str, Any]:
     }
 
 
+# 生成最终回复节点，使用LLM结合工具结果生成回复
 async def generate_response_node(state: AgentState) -> Dict[str, Any]:
     """
     生成最终回复节点
@@ -163,9 +165,10 @@ workflow.add_edge("human", "generate")
 workflow.add_edge("generate", "finish")
 workflow.add_edge("finish", END)
 
-# 编译图，配置checkpointer
+# 配置带有checkpointer图的workflow实例
 graph = workflow.compile(checkpointer=get_checkpointer())
 
+# 运行Agent主入口
 async def run_agent(
     session_id: str,
     user_query: str,
@@ -188,7 +191,7 @@ async def run_agent(
     """
     from .state import create_initial_state
     
-    # 创建初始状态
+    # 创建初始状态，一个AgentState实例
     initial_state = create_initial_state(session_id, user_query)
     
     # 配置执行（包含thread_id用于checkpointer）
@@ -199,7 +202,7 @@ async def run_agent(
         }
     }
     
-    # 执行图
+    # 执行workflow实例，返回最终结果
     result = await graph.ainvoke(initial_state, config)
     
     return {

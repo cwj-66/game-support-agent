@@ -7,6 +7,8 @@ import json
 from typing import Type, Optional
 from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
+from mcp.client.sse import sse_client
+from mcp.client.session import ClientSession
 
 
 class KnowledgeQueryInput(BaseModel):
@@ -63,32 +65,49 @@ class MCPKnowledgeTool(BaseTool):
     
     async def _arun(self, question: str) -> str:
         """
-        异步执行工具查询
-        
+        异步执行工具查询，通过 SSE 协议连接 MCP 知识库服务器
+
         Args:
             question: 用户查询问题
-            
+
         Returns:
             JSON格式的查询结果
-            
-        TODO:
-        - 实现真实的MCP SSE调用
-        - 添加超时控制
-        - 处理连接错误
         """
-        # TODO: 接入真实MCP客户端
-        # client = await self._get_mcp_client()
-        # result = await client.call_tool("query_knowledge", {"question": question})
-        
-        # 模拟响应（开发占位）
-        mock_response = {
-            "has_answer": True,
-            "answer": f"这是关于'{question}'的知识库答案（模拟）",
-            "confidence": 0.85,
-            "source": "mock_faq.json"
-        }
-        
-        return json.dumps(mock_response, ensure_ascii=False)
+        sse_url = f"{self.mcp_server_url.rstrip('/')}/sse"
+
+        try:
+            async with sse_client(sse_url) as streams:
+                async with ClientSession(*streams) as session:
+                    await session.initialize()
+                    result = await session.call_tool(
+                        "query_knowledge",
+                        arguments={"question": question},
+                    )
+
+            if getattr(result, "content", None):
+                first_item = result.content[0]
+                text = getattr(first_item, "text", None)
+                if text:
+                    return text
+
+            return json.dumps(
+                {
+                    "has_answer": False,
+                    "message": "MCP 服务返回内容为空",
+                    "confidence": 0.0,
+                },
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            print(f"[MCPKnowledgeTool] 连接 MCP Server 失败: {e}")
+            return json.dumps(
+                {
+                    "has_answer": False,
+                    "message": "未找到相关知识，建议转人工",
+                    "confidence": 0.0,
+                },
+                ensure_ascii=False,
+            )
     
     async def _get_mcp_client(self):
         """获取或创建MCP客户端"""

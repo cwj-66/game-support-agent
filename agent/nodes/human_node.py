@@ -13,6 +13,7 @@ from human_in_loop.reviewer import ReviewAction
 from human_in_loop.auditor import AuditLogger
 
 
+# 人工审核节点，触发中断并等待人工介入
 async def human_node(state: AgentState) -> Dict[str, Any]:
     """
     人工审核节点：触发中断并等待人工介入
@@ -83,6 +84,7 @@ async def human_node(state: AgentState) -> Dict[str, Any]:
     return result
 
 
+# 应用人工审核结果到状态
 def _apply_human_review(
     state: AgentState, 
     review: HumanReviewResult
@@ -140,6 +142,7 @@ def _apply_human_review(
     }
 
 
+# 记录人工审核审计日志
 async def _log_audit(state: AgentState, review: HumanReviewResult):
     """记录人工审核审计日志"""
     try:

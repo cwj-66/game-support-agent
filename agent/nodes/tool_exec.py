@@ -11,6 +11,7 @@ from ..state import AgentState
 from ..tools.mcp_adapter import MCPKnowledgeTool
 
 
+# 工具执行节点，根据reasoning节点的决策，决定是否调用工具，调用MCP工具获取知识
 async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     """
     工具执行节点：调用MCP知识库工具
@@ -47,27 +48,21 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     }
     
     try:
-        # 调用MCP工具
-        # TODO: 接入真实的MCP Server
-        # result = await knowledge_tool.ainvoke({"question": user_query})
-        
-        # 模拟工具调用结果（开发阶段占位）
-        mock_result = {
-            "has_answer": True,
-            "answer": "完成主线任务、每日委托、开启宝箱、参与活动都可以获得原石。",
-            "confidence": 0.92,
-            "source": "faq_v1.json",
-            "alternatives": []
-        }
+        # 调用MCP工具并解析JSON结果
+        # MCPKnowledgeTool._arun 返回 JSON 字符串
+        raw_result = await knowledge_tool._arun(user_query)
+        knowledge_result = json.loads(raw_result)
+        if not isinstance(knowledge_result, dict):
+            raise ValueError("MCP工具返回结果不是JSON对象")
         
         # 更新调用记录
         tool_call_record["status"] = "completed"
-        tool_call_record["output"] = mock_result
-        tool_call_record["has_answer"] = mock_result["has_answer"]
+        tool_call_record["output"] = knowledge_result
+        tool_call_record["has_answer"] = bool(knowledge_result.get("has_answer", False))
         
         # 创建ToolMessage记录结果
         tool_message = ToolMessage(
-            content=json.dumps(mock_result, ensure_ascii=False),
+            content=json.dumps(knowledge_result, ensure_ascii=False),
             name="query_knowledge",
             tool_call_id=f"call_{len(tool_calls)}"
         )
@@ -78,7 +73,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             "tool_calls": tool_calls + [tool_call_record],
             "metadata": {
                 **state.get("metadata", {}),
-                "knowledge_result": mock_result,
+                "knowledge_result": knowledge_result,
                 "tool_exec_complete": True
             }
         }

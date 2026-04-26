@@ -17,7 +17,7 @@ except ImportError:
     FastMCP = None
     Context = None
 
-from .client import get_rag_client, close_rag_client, RAGServiceError
+from .client import get_rag_client, close_rag_client
 from .auth import get_auth_manager, MCPAuthManager
 
 
@@ -60,52 +60,22 @@ async def query_knowledge(
     
     try:
         # 调用RAG服务
-        response = await client.query_knowledge(question, top_k=3)
-        
-        # 组装结果
-        if response.has_answer and response.results:
-            best = max(response.results, key=lambda x: x.score)
-            result = {
-                "has_answer": True,
-                "answer": best.content,
-                "confidence": best.score,
-                "source": best.source,
-                "alternatives": [
-                    {"content": r.content, "score": r.score}
-                    for r in response.results[1:]  # 其他候选
-                ]
-            }
-        else:
-            result = {
-                "has_answer": False,
-                "answer": None,
-                "message": "未找到相关知识，建议转人工",
-                "raw_results": [
-                    {"content": r.content, "score": r.score}
-                    for r in response.results
-                ]
-            }
-        
+        result = await client.query_knowledge(question, top_k=3)
+
         if ctx:
             await ctx.info(f"查询完成，置信度: {result.get('confidence', 0)}")
-        
+
         return json.dumps(result, ensure_ascii=False)
-        
-    except RAGServiceError as e:
-        # RAG服务异常，返回降级响应
+
+    except Exception as e:
         error_result = {
             "has_answer": False,
             "error": str(e),
-            "message": "知识服务暂时不可用"
+            "message": "知识服务暂时不可用",
         }
         if ctx:
-            await ctx.error(f"RAG服务错误: {e}")
-        return json.dumps(error_result, ensure_ascii=False)
-    except Exception as e:
-        # 未知异常
-        if ctx:
             await ctx.error(f"未知错误: {e}")
-        raise
+        return json.dumps(error_result, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -145,12 +115,8 @@ async def run_server(host: str = "0.0.0.0", port: int = 8001):
     
     print(f"启动MCP知识服务器: http://{host}:{port}")
     print(f"SSE端点: http://{host}:{port}/sse")
-    
-    # fastmcp 的 SSE 运行方式
-    # await mcp.run_sse_async(host=host, port=port)
-    
-    # 临时占位，实际实现需要 fastmcp 的具体API
-    pass
+
+    await mcp.run_sse_async(host=host, port=port)
 
 
 # 测试入口

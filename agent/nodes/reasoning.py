@@ -72,6 +72,7 @@ def _extract_json_block(content: str) -> Dict[str, Any]:
     return json.loads(raw)
 
 
+# 推理节点，根据用户问题和对话历史，决定是否需要调用工具，评估置信度
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     """
     推理节点：分析用户意图并决策
@@ -91,21 +92,25 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     - 添加工具选择逻辑（未来可能有多个工具）
     - 优化敏感词检测（与detector模块复用逻辑）
     """
+
+    # 获取用户问题和对话历史
     user_query = state["user_query"]
     messages = state["messages"]
     
-    # 构建推理提示词
+    # 构建推理提示词，包含用户问题和对话历史
     reasoning_prompt = build_reasoning_prompt(user_query, messages)
     
-    # 构造LLM输入
+    # 构造LLM输入，包含系统提示词、对话历史和推理提示词
     llm_messages = [
         SystemMessage(content=GAME_SUPPORT_SYSTEM_PROMPT),
         *messages,
         HumanMessage(content=reasoning_prompt),
     ]
 
+    # 创建LLM实例
     llm = _build_llm_from_settings()
     try:
+        # 调用LLM实例，分析意图
         result = await analyze_intent_llm(llm, llm_messages, user_query)
     except Exception as exc:
         # LLM异常或JSON解析失败时，回退到保守默认值
@@ -138,6 +143,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
         content=f"[推理] 意图：{result.intent}，需要工具：{result.need_tool}"
     )
     
+    # workflow.set_entry_point("reasoning")的返回结果，包含推理结果、metadata和是否需要工具调用
     return {
         "messages": [ai_message],
         "metadata": metadata,

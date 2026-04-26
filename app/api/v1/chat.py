@@ -15,6 +15,7 @@ from agent.graph import run_agent
 router = APIRouter(prefix="/chat", tags=["对话"])
 
 
+# 发送对话消息的入口API
 @router.post("/send", response_model=ChatResponse)
 async def send_message(
     request: ChatRequest,
@@ -35,7 +36,7 @@ async def send_message(
     5. 返回响应或审核标记
     """
     try:
-        # 执行Agent
+        # 执行Agent智能体主流程
         result = await run_agent(
             session_id=request.session_id,
             user_query=request.message
