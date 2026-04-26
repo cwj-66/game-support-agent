@@ -62,9 +62,12 @@ class RAGClient:
 
         try:
             response = await client.post(
-                f"{self.base_url}/query",
+                f"{self.base_url}/api/v1/query",
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-API-Key": "test-api-key"  # TODO: 生产环境应从配置读取
+                },
             )
             response.raise_for_status()
             data = response.json()
