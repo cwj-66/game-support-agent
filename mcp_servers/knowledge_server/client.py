@@ -110,11 +110,6 @@ class RAGClient:
             self._client = None
 
 
-class RAGServiceError(Exception):
-    """RAG服务调用异常"""
-    pass
-
-
 # 全局客户端实例（单例模式）
 _rag_client: Optional[RAGClient] = None
 
