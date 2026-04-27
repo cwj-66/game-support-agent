@@ -4,11 +4,12 @@
 """
 
 import json
+from datetime import datetime, timezone
 from typing import Dict, Any
 from langchain_core.messages import ToolMessage
 
 from ..state import AgentState
-from ..tools.mcp_adapter import MCPKnowledgeTool
+from ..tools.mcp_adapter import create_knowledge_tool
 
 
 # 工具执行节点，根据reasoning节点的决策，决定是否调用工具，调用MCP工具获取知识
@@ -37,13 +38,13 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     tool_calls = state.get("tool_calls", [])
     
     # 创建MCP知识工具实例
-    knowledge_tool = MCPKnowledgeTool()
+    knowledge_tool = create_knowledge_tool()
     
     # 记录工具调用开始
     tool_call_record = {
         "tool": "query_knowledge",
         "input": user_query,
-        "timestamp": "2024-01-01T00:00:00",  # TODO: 使用真实时间
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "started"
     }
     
@@ -66,7 +67,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             name="query_knowledge",
             tool_call_id=f"call_{len(tool_calls)}"
         )
-        
+
         # 更新状态
         return {
             "messages": [tool_message],
@@ -104,25 +105,3 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             }
         }
 
-
-async def execute_mcp_tool(
-    tool_name: str, 
-    params: Dict[str, Any],
-    mcp_server_url: str
-) -> Dict[str, Any]:
-    """
-    执行MCP工具（真实实现）
-    
-    通过SSE连接调用MCP Server的工具
-    
-    Args:
-        tool_name: 工具名称
-        params: 工具参数
-        mcp_server_url: MCP服务器地址
-        
-    TODO:
-    - 实现MCP客户端连接
-    - 处理SSE流式响应
-    - 添加超时控制
-    """
-    pass

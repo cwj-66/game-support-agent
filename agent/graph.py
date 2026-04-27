@@ -3,13 +3,17 @@ LangGraph 主图定义
 Agent编排核心文件，定义节点顺序和条件边
 """
 
+from datetime import datetime, timezone
 from typing import Literal, Dict, Any, Optional, AsyncGenerator
+
 from langgraph.graph import StateGraph, END
 
 from .state import AgentState
 from .nodes import reasoning_node, tool_exec_node, human_node
 from .checkpointer import get_checkpointer
 from human_in_loop.detector import InterruptDetector
+from app.core.llm import get_chat_model
+from app.core.config import get_settings
 
 
 # 从reasoning节点的返回值，根据need_tool决定是否调用工具
@@ -62,10 +66,11 @@ async def detector_node(state: AgentState) -> Dict[str, Any]:
     metadata = state.get("metadata", {})
     reasoning = metadata.get("reasoning", {})
     
-    # 初始化检测器，使用内置敏感词列表和置信度阈值
+    # 从配置中读取敏感词和阈值，避免硬编码
+    settings = get_settings()
     detector = InterruptDetector(
-        sensitive_words=["封号", "退款", "投诉", "举报", "盗号"],
-        confidence_threshold=0.6
+        sensitive_words=settings.SENSITIVE_WORDS,
+        confidence_threshold=settings.HIL_CONFIDENCE_THRESHOLD,
     )
     
     # 执行检测，检查是否需要触发human-in-loop
@@ -91,32 +96,41 @@ async def detector_node(state: AgentState) -> Dict[str, Any]:
 async def generate_response_node(state: AgentState) -> Dict[str, Any]:
     """
     生成最终回复节点
-    
-    使用LLM结合工具结果生成回复
-    
-    TODO: 接入真实LLM
+
+    优先级：人工 OVERRIDE/MODIFY > LLM 润色知识库结果 > 兜底回复
     """
-    from langchain_core.messages import AIMessage
-    
+    from langchain_core.messages import HumanMessage, AIMessage
+
     metadata = state.get("metadata", {})
     knowledge = metadata.get("knowledge_result", {})
     human_review = state.get("human_review")
-    
-    # 如果有审核结果且是MODIFY/OVERRIDE，使用人工内容
-    if human_review and human_review.get("action") in ["MODIFY", "OVERRIDE"]:
+    user_query = state.get("user_query", "")
+
+    # ── 人工干预优先：OVERRIDE 或 MODIFY 直接使用人工内容，跳过 LLM ──
+    if human_review and human_review.get("action") in ["OVERRIDE", "MODIFY"]:
         final_response = human_review.get("modified_content", "[人工处理完成]")
+
     elif knowledge.get("has_answer"):
-        # 使用知识库答案
-        final_response = knowledge.get("answer", "抱歉，无法回答您的问题。")
+        # ── 调用 LLM 将知识库原始信息润色为友好客服口吻 ──
+        raw_answer = knowledge.get("answer", "")
+        prompt = (
+            f"你是原神游戏的专业客服，请用专业、友好的口吻回复玩家问题。\n\n"
+            f"玩家问题：{user_query}\n\n"
+            f"知识库参考信息：{raw_answer}\n\n"
+            f"请直接给出回复，不要重复问题，语言简洁自然。"
+        )
+        llm = get_chat_model()
+        ai_result = await llm.ainvoke([HumanMessage(content=prompt)])
+        final_response = ai_result.content
+
     else:
-        # 通用回复
         final_response = "抱歉，我暂时无法回答这个问题，建议联系人工客服。"
-    
+
     ai_message = AIMessage(content=final_response)
-    
+
     return {
         "messages": [ai_message],
-        "final_response": final_response
+        "final_response": final_response,
     }
 
 
@@ -130,7 +144,7 @@ async def finish_node(state: AgentState) -> Dict[str, Any]:
         "metadata": {
             **state.get("metadata", {}),
             "completed": True,
-            "finished_at": "2024-01-01T00:00:00"  # TODO: 真实时间
+            "finished_at": datetime.now(timezone.utc).isoformat(),
         }
     }
 
@@ -184,10 +198,6 @@ async def run_agent(
         
     Returns:
         最终执行结果
-        
-    TODO:
-    - 实现thread_id用于恢复
-    - 添加流式输出支持
     """
     from .state import create_initial_state
     

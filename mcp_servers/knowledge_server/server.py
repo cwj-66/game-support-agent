@@ -60,7 +60,6 @@ async def query_knowledge(
 
     这是Agent与外部知识交互的主要接口。
     输入用户问题，返回RAG检索到的相关知识。
-
     Args:
         question: 用户问题，例如"原神如何获得原石？"
         ctx: MCP上下文，用于日志和进度报告
