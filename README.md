@@ -8,12 +8,12 @@
 game-support-agent/
 ├── mcp_servers/knowledge_server/  # SSE MCP Server
 ├── agent/                         # LangGraph 核心
-│   ├── graph.py                   # 主图定义
+│   ├── graph.py                   # 主图、路由与 generate/detector 等
 │   ├── nodes/                     # 推理、工具执行、人工审核节点
 │   └── tools/                     # MCP 工具适配
 ├── app/                           # FastAPI 服务
-│   ├── api/v1/                    # 对话和审核API
-│   ├── core/                      # 配置和异常处理
+│   ├── api/v1/                    # 对话和审核 API
+│   ├── core/                      # 配置、LLM 工厂、异常
 │   └── models/                    # 数据模型
 ├── human_in_loop/                 # 重点模块
 │   ├── detector.py                # 中断检测（敏感词+置信度）
@@ -24,76 +24,85 @@ game-support-agent/
 │   ├── cli.py                     # 终端工具
 │   └── web_ui.py                  # Streamlit 审核界面
 ├── tests/                         # 测试
-└── data/                          # 30条原神FAQ
+└── data/                          # 示例原神 FAQ
 ```
 
 ## 核心特性
 
 ### 1. Human-in-loop 机制
 
-- **中断检测**：敏感词列表 + 置信度阈值双重过滤
-- **三种操作**：APPROVE（通过）/ MODIFY（修改）/ OVERRIDE（覆盖）
-- **审计链**：完整的操作记录，支持事后追溯
+- **中断检测**：`InterruptDetector` 结合敏感词 + 置信度；列表与阈值来自 `app.core.config`（`.env` 中 `SENSITIVE_WORDS`、`HIL_CONFIDENCE_THRESHOLD`）
+- **三种操作**：APPROVE / MODIFY / OVERRIDE
+- **审计链**：操作记录，支持事后追溯
 
 ### 2. MCP 协议集成
 
-- SSE 模式 MCP Server
-- 暴露 `query_knowledge` 工具查询RAG
-- 独立API Key认证层
+- SSE（默认端点路径 `/sse`，可配置 `ping` 保持长连）
+- 工具：`query_knowledge`（查 RAG）、`check_knowledge_health`
+- 请求头 `X-MCP-API-Key` 与 `MCP_API_KEY` 对应；知识服中间件未通过时返回 401
+- Agent 侧 `create_knowledge_tool()` 通过 SSE 调用并自动带 Key
 
 ### 3. LangGraph 编排
 
-节点顺序：`reasoning` → `tool_exec` → `detector` → [条件分支] → `human_node` / `generate`
+- 流程：`reasoning` →（按需）`tool_exec` → `detector` → 分支 `human` / `generate` → `finish` → `END`
+- `generate`：`MODIFY` / `OVERRIDE` 时**直接用人工内容**；否则若有知识结果则走 `get_chat_model()` 以原神客服口吻润色
+- 提供 `run_agent` / `stream_agent`（`astream` 按节点更新，便于对接 SSE）
 
 ## 快速开始
 
 ### 1. 环境配置
 
 ```bash
-# 创建虚拟环境
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# Windows: venv\Scripts\activate
+# macOS/Linux: source venv/bin/activate
 
-# 安装依赖
 pip install -r requirements.txt
-
-# 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入 API Key 等配置
+# 至少配置：LLM（DASHSCOPE_API_KEY 或 OPENAI_API_KEY）；
+# 联调 MCP 时：MCP_API_KEY、MCP_SERVER_URL、RAG_SERVICE_URL
 ```
+
+常用变量（与 `app.core.config` 一致，见 `.env.example`）：
+
+| 变量 | 说明 |
+|------|------|
+| `DASHSCOPE_API_KEY` / `OPENAI_API_KEY` | LLM（有 DashScope 时优先） |
+| `MCP_SERVER_URL` | MCP 基址，默认 `http://localhost:8001` |
+| `MCP_API_KEY` | 请求头 `X-MCP-API-Key`，须与知识服侧一致 |
+| `RAG_SERVICE_URL` | enterprise-rag 地址，默认 `http://localhost:8000` |
+| `HIL_CONFIDENCE_THRESHOLD` / `SENSITIVE_WORDS` | 人工审核与中断检测参数 |
 
 ### 2. 启动服务
 
+1. 启动 **RAG**（需先部署 enterprise-rag，默认 `8000`）
+2. 启动 **MCP 知识服**（默认 `8001`，SSE：`/sse`）：
+
 ```bash
-# 方式1：手动启动各服务
-# 1. 启动RAG服务（需先部署 enterprise-rag）
-# 2. 启动MCP Server
-python -m mcp_servers.knowledge_server.server
-
-# 3. 启动FastAPI服务
-python -m app.main
-
-# 方式2：Docker Compose一键启动（需配置RAG镜像）
-docker-compose up -d
+python -c "import asyncio; from mcp_servers.knowledge_server.server import run_server; asyncio.run(run_server())"
 ```
 
-### 3. 导入FAQ数据
+说明：包内 `mcp_servers.knowledge_server.server` 的 `__main__` 目前偏向本地单测，联调/生产请用上面方式调用 `run_server()`。
+
+3. 启动 **FastAPI**：
 
 ```bash
-# 将示例FAQ导入RAG服务
+python -m app.main
+```
+
+可选：`docker-compose up -d`（需镜像与依赖已配好）
+
+### 3. 导入 FAQ 数据
+
+```bash
 python scripts/ingest_faq.py --rag-url http://localhost:8000
 ```
 
 ### 4. 测试
 
 ```bash
-# CLI 测试
 python client/cli.py --session test_001 "如何获得原石？"
-
-# 进入交互模式
 python client/cli.py
-
-# Web 审核界面
 streamlit run client/web_ui.py
 ```
 
@@ -132,20 +141,21 @@ Content-Type: application/json
 
 | 触发类型 | 说明 | 风险等级 |
 |---------|------|---------|
-| 敏感词 | 内容匹配敏感词列表 | high |
-| 低置信度 | LLM置信度 < 阈值 | medium |
+| 敏感词 | 内容匹配 `SENSITIVE_WORDS` | high |
+| 低置信度 | 推理置信度 &lt; `HIL_CONFIDENCE_THRESHOLD` | medium |
+| 工具失败 | `tool_calls` 中含失败记录 | 见 detector 逻辑 |
 
 ### 三种审核操作
 
 | 操作 | 说明 | 最终回复 |
 |-----|------|---------|
-| APPROVE | 直接通过 | 原Agent回复 |
+| APPROVE | 直接通过 | 原 Agent 回复 |
 | MODIFY | 修改后通过 | 人工编辑版 |
 | OVERRIDE | 完全覆盖 | 人工全新编写 |
 
 ### 审计日志
 
-保存在 `logs/audit/` 目录，JSON格式：
+保存在 `logs/audit/`，JSON 示例如下：
 
 ```json
 {
@@ -157,91 +167,77 @@ Content-Type: application/json
   "review_action": "MODIFY",
   "reviewer_id": "admin_001",
   "final_response": "...",
-  "timestamps": {...}
+  "timestamps": {}
 }
 ```
 
-## 测试
+## 自动化测试
 
 ```bash
-# 运行所有测试
 pytest
-
-# 运行特定测试
 pytest tests/test_human_in_loop.py -v
-
-# 覆盖率报告
 pytest --cov=agent --cov=human_in_loop --cov-report=html
 ```
 
 ## 技术栈
 
-- **LangGraph**: Agent 编排和状态管理
+- **LangGraph** / **langchain_openai**: 编排与 LLM
 - **FastAPI**: RESTful API
-- **MCP (fastmcp)**: 协议层实现
-- **httpx**: 异步HTTP客户端
-- **Streamlit**: 审核可视化界面
-- **Pydantic**: 数据验证
-- **pytest**: 测试框架
+- **MCP (Python SDK)**: SSE 客户端与知识服
+- **httpx**: 异步 HTTP
+- **Streamlit**: 审核界面
+- **Pydantic / pydantic-settings**: 配置与校验
+- **pytest**
 
 ## 项目结构说明
 
 ### mcp_servers/knowledge_server/
 
-```python
-server.py   # SSE MCP Server，暴露 query_knowledge 工具
-client.py   # RAG HTTP 客户端封装
-auth.py     # MCP层API Key校验
-models.py   # 请求/响应Pydantic模型
+```text
+server.py   # FastMCP、SSE、API Key 中间件、run_server（uvicorn）
+client.py   # 调用 RAG 的 httpx 客户端
+auth.py     # X-MCP-API-Key 与 MCP_API_KEY
+models.py
 ```
 
 ### agent/
 
-```python
-graph.py    # LangGraph主图，节点编排
-state.py    # AgentState定义（消息、中断标记、审核结果）
-nodes/      # 三个核心节点
-  reasoning.py   # LLM自主决策
-  tool_exec.py   # 执行MCP工具
-  human_node.py  # 断点暂停/恢复
+```text
+graph.py         # 主图、generate_response_node（LLM 润色）、detector、finish
+state.py
+nodes/           # reasoning, tool_exec（create_knowledge_tool）, human 等
 tools/
-  mcp_adapter.py # MCP工具转LangGraph工具
-checkpointer.py  # MemorySaver配置
+  mcp_adapter.py # create_knowledge_tool、SSE 调用
+checkpointer.py
 prompts/
-  system.py      # 系统提示词
 ```
 
-### human_in_loop/ （重点模块）
+### human_in_loop/
 
-```python
-detector.py    # InterruptDetector：敏感词+置信度检测
-reviewer.py    # HumanReviewer：三种操作处理
-auditor.py     # AuditLogger：审计链记录
-schema.py      # 中断决策、审核操作、审计日志数据结构
+```text
+detector.py    # 敏感词 + 置信度 + 工具失败等
+reviewer.py / auditor.py / schema.py
 ```
 
 ## 待办事项
 
 ### 高优先级
 
-- [ ] 接入真实LLM（OpenAI/Azure）
-- [ ] 实现真实MCP SSE连接
-- [ ] 完善LangGraph interrupt()集成
-- [ ] 接入真实的RAG服务
+- [ ] 将知识服 `run_server` 与 `python -m mcp_servers.knowledge_server.server` 的入口对齐，减少 `python -c` 联调成本
+- [ ] 在 `app` 生命周期中补齐 RAG / MCP 健康检查与可观测性（当前 main 中仍有占位 TODO）
+- [ ] 按需接入 LangGraph 官方 `interrupt()` 与多轮人工审核/恢复全链路
 
 ### 中优先级
 
-- [ ] 实现Redis/Postgres持久化
-- [ ] 添加用户会话管理
-- [ ] 实现审核任务队列分配
-- [ ] 添加更多测试覆盖
+- [ ] Redis / Postgres 持久化状态与审核队列
+- [ ] 用户与会话管理、审核任务分配
+- [ ] 提高单测与集成测覆盖率（含 SSE MCP 端到端）
 
 ### 低优先级
 
-- [ ] 多语言支持
-- [ ] 监控指标（Prometheus）
-- [ ] 日志聚合（Sentry）
-- [ ] 性能优化
+- [ ] 多语言回复
+- [ ] Prometheus 指标、Sentry 等
+- [ ] 性能与成本优化
 
 ## 许可证
 
