@@ -6,57 +6,61 @@
 
 ```
 game-support-agent/
-├── agent/                         # LangGraph 核心
-│   ├── graph.py                   # 主图编排、generate/detector/finish
-│   ├── state.py                   # Agent 状态
-│   ├── checkpointer.py            # 状态持久化
-│   ├── nodes/                     # 节点（推理、工具执行、人工审核）
-│   │   ├── reasoning.py
-│   │   ├── tool_exec.py
-│   │   └── human_node.py
-│   ├── tools/                     # MCP 工具适配
-│   │   ├── __init__.py
-│   │   └── mcp_adapter.py
+├── agent/                              # LangGraph 核心编排
+│   ├── graph.py                        # 主图：边定义 + generate/finish 节点 + 路由函数
+│   ├── state.py                        # AgentState 定义
+│   ├── checkpointer.py                 # 状态持久化
+│   ├── nodes/
+│   │   ├── reasoning.py                # LLM 推理（bind_tools，自主决策）
+│   │   ├── tool_exec.py                # 通用工具分发器（按 tool_calls 执行）
+│   │   └── human_node.py               # 人工审核结果挂起节点
+│   ├── tools/
+│   │   ├── __init__.py                 # get_all_tools() 工厂
+│   │   ├── mcp_adapter.py              # MCP Knowledge Tool 适配器（SSE 调用）
+│   │   └── escalate.py                 # escalate_to_human 工具定义
 │   └── prompts/
-│       └── system.py              # 系统提示词
-├── app/                           # FastAPI 服务
-│   ├── main.py                    # 应用入口
-│   ├── core/                      # 配置、LLM 工厂、异常
-│   │   ├── config.py
-│   │   ├── llm.py
-│   │   └── exceptions.py
-│   └── models/                    # 数据模型
-│       ├── chat.py
-│       └── review.py
-├── human_in_loop/                 # 重点模块
+│       └── system.py                   # 客服系统提示词 + 工具说明
+├── app/                                # FastAPI 服务层
+│   ├── main.py                         # 应用入口（CORS、路由注册、生命周期）
+│   ├── api/v1/
+│   │   ├── chat.py                     # 对话接口 POST /chat/send、GET /chat/history
+│   │   └── human.py                    # 人工审核接口 GET /human/pending、POST /human/review 等
+│   ├── core/
+│   │   ├── config.py                   # pydantic-settings 配置管理
+│   │   ├── llm.py                      # LLM 实例工厂
+│   │   └── exceptions.py              # 全局异常处理
+│   └── models/
+│       ├── chat.py                     # 对话请求/响应模型
+│       └── review.py                   # 审核请求/响应模型
+├── human_in_loop/                      # Human-in-loop 底层模块
 │   ├── __init__.py
-│   ├── detector.py                # 中断检测（敏感词+置信度）
-│   ├── reviewer.py                # 三种审核操作
-│   ├── auditor.py                 # 审计日志
-│   └── schema.py                  # 数据结构
-├── mcp_servers/knowledge_server/  # SSE MCP Server
-│   ├── server.py                  # FastMCP、SSE 端点、API Key 中间件
-│   ├── client.py                  # 调用 RAG 的 httpx 客户端
-│   ├── auth.py                    # X-MCP-API-Key 验证
-│   └── models.py                  # 请求/响应模型
-├── client/                        # 客户端工具
-│   ├── cli.py                     # 终端交互工具
-│   └── web_ui.py                  # Streamlit 审核界面
+│   ├── detector.py                     # 规则兜底：敏感词 + 置信度检测
+│   ├── reviewer.py                     # APPROVE / MODIFY / OVERRIDE
+│   ├── auditor.py                      # 审计日志
+│   └── schema.py                       # 数据结构
+├── mcp_servers/knowledge_server/       # SSE MCP Server
+│   ├── server.py                       # FastMCP、SSE 端点、API Key 中间件
+│   ├── client.py                       # 调用 RAG 的 httpx 客户端
+│   ├── auth.py                         # X-MCP-API-Key 验证
+│   └── models.py                       # 请求/响应模型
+├── client/                             # 客户端工具
+│   ├── cli.py                          # 终端交互工具
+│   └── web_ui.py                       # Streamlit 审核界面
 ├── scripts/
-│   └── ingest_faq.py              # FAQ 数据导入 RAG
-├── tests/                         # 测试
+│   └── ingest_faq.py                   # FAQ 数据导入 RAG
+├── tests/                              # 测试
 │   ├── conftest.py
 │   ├── test_agent.py
 │   ├── test_human_in_loop.py
 │   └── test_mcp_server.py
 ├── data/
-│   └── faq.json                   # 示例原神 FAQ
-├── .env                           # 本地配置（不提交）
-├── .env.example                   # 配置模板
+│   └── faq.json                        # 示例原神 FAQ
+├── .env                                # 本地配置（不提交）
+├── .env.example                        # 配置模板
 ├── .gitignore
 ├── requirements.txt
 ├── docker-compose.yml
-└── litellm_config.yaml            # LiteLLM 配置
+└── litellm_config.yaml                 # LiteLLM 配置
 ```
 
 ## 核心特性
@@ -76,7 +80,10 @@ game-support-agent/
 
 ### 3. LangGraph 编排
 
-- 流程：`reasoning` →（按需）`tool_exec` → `detector` → 分支 `human` / `generate` → `finish` → `END`
+- 采用 **ReAct 风格** 循环图：`reasoning`（LLM 自主调用 `tool_calls`）→ `tool_exec`（通用分发）→ `reasoning`（多轮循环），直到 LLM 不再调用工具
+- `tool_exec` 出口：若最后一条 `ToolMessage` 内容以 `"ESCALATE:"` 开头 → `human`，否则回 `reasoning`
+- `reasoning` 出口：若 LLM 返回了 `tool_calls` → `tool_exec`，否则 → `generate`
+- `detector` 作为 `generate` 之后**最后一道规则兜底**，路由到 `human`（触发敏感词/低置信度）或 `finish`（正常结束）
 - `generate`：`MODIFY` / `OVERRIDE` 时**直接用人工内容**；否则若有知识结果则走 `get_chat_model()` 以原神客服口吻润色
 - 提供 `run_agent` / `stream_agent`（`astream` 按节点更新，便于对接 SSE）
 
@@ -171,11 +178,12 @@ Content-Type: application/json
 
 ### 中断触发条件
 
-| 触发类型 | 说明 | 风险等级 |
-|---------|------|---------|
-| 敏感词 | 内容匹配 `SENSITIVE_WORDS` | high |
-| 低置信度 | 推理置信度 &lt; `HIL_CONFIDENCE_THRESHOLD` | medium |
-| 工具失败 | `tool_calls` 中含失败记录 | 见 detector 逻辑 |
+中断有两个入口：
+
+| 触发入口 | 说明 | 路由 |
+|---------|------|------|
+| **LLM 主动 escalate** | LLM 调用 `escalate_to_human` | `tool_exec` → `human` |
+| **detector 规则兜底** | 敏感词匹配 / 置信度低于 `HIL_CONFIDENCE_THRESHOLD` | `generate` → `detector` → `human` |
 
 ### 三种审核操作
 
@@ -235,24 +243,26 @@ models.py   # 请求/响应模型
 ### agent/
 
 ```text
-graph.py         # 主图编排、generate_response_node（LLM 润色）、detector、finish
+graph.py         # 主图编排：边定义、路由函数、generate_response_node、detector、finish
 state.py         # Agent 状态定义
 checkpointer.py  # 状态持久化
 nodes/
-  reasoning.py   # 推理节点
-  tool_exec.py   # 工具执行（create_knowledge_tool）
+  reasoning.py   # LLM 推理（bind_tools，绑定 query_knowledge + escalate_to_human）
+  tool_exec.py   # 通用工具分发器（按 tool_calls 执行，支持多工具）
   human_node.py  # 人工审核节点
 tools/
+  __init__.py    # get_all_tools() 工厂
   mcp_adapter.py # SSE 调用与工具适配
+  escalate.py    # escalate_to_human 工具（返回 "ESCALATE:reason"）
 prompts/
-  system.py      # 系统提示词
+  system.py      # 系统提示词（含两个工具的调用原则）
 ```
 
 ### human_in_loop/
 
 ```text
 __init__.py
-detector.py    # 敏感词 + 置信度 + 工具失败检测
+detector.py    # 规则兜底：敏感词 + 置信度 + 工具失败检测（generate 之后最后一道）
 reviewer.py    # APPROVE / MODIFY / OVERRIDE
 auditor.py     # 审计日志
 schema.py      # 数据结构
