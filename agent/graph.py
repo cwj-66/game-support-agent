@@ -16,37 +16,58 @@ from app.core.llm import get_chat_model
 from app.core.config import get_settings
 
 
-# 从reasoning节点的返回值，根据need_tool决定是否调用工具
-async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "detector"]:
+# reasoning 出口：AIMessage 带 tool_calls → tool_exec，否则 → generate
+async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "generate"]:
     """
-    从reasoning节点路由
-    
-    根据推理结果决定是否调用工具：
-    - 需要工具 → tool_exec
-    - 不需要工具 → detector（直接生成回复）
+    reasoning 节点路由
+
+    - 最后一条 AIMessage 含 tool_calls → tool_exec
+    - 兜底：metadata.reasoning.need_tool 为 True → tool_exec
+    - 其余 → generate
     """
-    metadata = state.get("metadata", {})
-    reasoning = metadata.get("reasoning", {})
-    
-    if reasoning.get("need_tool", False):
+    from langchain_core.messages import AIMessage
+    messages = state.get("messages", [])
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            if getattr(msg, "tool_calls", None):
+                return "tool_exec"
+            break
+    # 兼容旧 reasoning_node 的 need_tool 字段
+    if state.get("metadata", {}).get("reasoning", {}).get("need_tool", False):
         return "tool_exec"
-    return "detector"
+    return "generate"
 
 
-# 从detector节点的返回值，根据是否需要中断决定是否进入人工审核
-async def route_from_detector(state: AgentState) -> Literal["human", "generate"]:
+# tool_exec 出口：最后一条 ToolMessage 以 "ESCALATE:" 开头 → human，否则回 reasoning
+async def route_from_tool_exec(state: AgentState) -> Literal["human", "reasoning"]:
     """
-    从detector节点路由
-    
-    根据中断检测结果决定：
-    - 触发中断 → human（进入人工审核）
-    - 直接通过 → generate（生成最终回复）
+    tool_exec 节点路由
+
+    - escalate_to_human 工具返回 "ESCALATE:..." → human
+    - 普通工具结果 → 回到 reasoning 继续决策
+    """
+    from langchain_core.messages import ToolMessage
+    messages = state.get("messages", [])
+    for msg in reversed(messages):
+        if isinstance(msg, ToolMessage):
+            if msg.content.startswith("ESCALATE:"):
+                return "human"
+            break
+    return "reasoning"
+
+
+# detector 兜底出口：generate 之后最后一道防线
+async def route_from_detector(state: AgentState) -> Literal["human", "finish"]:
+    """
+    detector 节点路由（generate 之后的兜底）
+
+    - 规则触发中断 → human
+    - 通过 → finish
     """
     interrupt_info = state.get("interrupt_info")
-    
     if interrupt_info and interrupt_info.get("should_interrupt", False):
         return "human"
-    return "generate"
+    return "finish"
 
 
 # ============ 节点函数实现 ============
@@ -164,19 +185,33 @@ workflow.add_node("finish", finish_node)
 
 # 定义边
 workflow.set_entry_point("reasoning")
+
+# reasoning → tool_exec（有工具调用）| generate（无工具调用）
 workflow.add_conditional_edges(
     "reasoning",
     route_from_reasoning,
-    {"tool_exec": "tool_exec", "detector": "detector"},
+    {"tool_exec": "tool_exec", "generate": "generate"},
 )
-workflow.add_edge("tool_exec", "detector")
+
+# tool_exec → human（LLM主动触发escalate）| reasoning（普通工具结果，ReAct循环）
+workflow.add_conditional_edges(
+    "tool_exec",
+    route_from_tool_exec,
+    {"human": "human", "reasoning": "reasoning"},
+)
+
+# generate → detector（最后兜底规则检测）
+workflow.add_edge("generate", "detector")
+
+# detector → human（规则兜底触发）| finish（正常结束）
 workflow.add_conditional_edges(
     "detector",
     route_from_detector,
-    {"human": "human", "generate": "generate"},
+    {"human": "human", "finish": "finish"},
 )
+
+# 人工审核后重新生成回复
 workflow.add_edge("human", "generate")
-workflow.add_edge("generate", "finish")
 workflow.add_edge("finish", END)
 
 # 配置带有checkpointer图的workflow实例

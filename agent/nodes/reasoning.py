@@ -1,30 +1,17 @@
 """
-LLM 自主决策节点
-分析用户意图，决定是否需要调用工具，评估置信度
+LLM 自主决策节点（ReAct 风格）
+LLM 通过 bind_tools 主动决定调用哪个工具，或直接生成回复
 """
 
-import json
-from typing import Dict, Any, List
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
+from typing import Dict, Any
+
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field, ConfigDict
 
 from ..state import AgentState
-from ..prompts.system import GAME_SUPPORT_SYSTEM_PROMPT, build_reasoning_prompt
+from ..tools import get_all_tools
+from ..prompts.system import GAME_SUPPORT_SYSTEM_PROMPT
 from app.core.config import get_settings
-
-
-class ReasoningOutputSchema(BaseModel):
-    """大模型结构化输出 Schema（严格）"""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    intent: str = Field(..., min_length=1, description="用户意图")
-    need_tool: bool = Field(..., description="是否需要调用工具")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="置信度")
-    has_sensitive: bool = Field(..., description="是否包含敏感内容")
-    sensitive_words: List[str] = Field(default_factory=list, description="敏感词")
-    reasoning: str = Field(..., min_length=1, description="推理过程")
 
 
 def _build_llm_from_settings() -> ChatOpenAI:
@@ -58,115 +45,44 @@ def _build_llm_from_settings() -> ChatOpenAI:
     raise ValueError("未配置 LLM 密钥，请在 .env 设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
 
 
-def _extract_json_block(content: str) -> Dict[str, Any]:
-    """从模型文本中提取 JSON（兼容 ```json ... ``` 包裹）"""
-    raw = content.strip()
-    if raw.startswith("```"):
-        parts = raw.split("```")
-        for part in parts:
-            part = part.strip()
-            if part.startswith("json"):
-                part = part[4:].strip()
-            if part.startswith("{") and part.endswith("}"):
-                return json.loads(part)
-    return json.loads(raw)
-
-
-# 推理节点，根据用户问题和对话历史，决定是否需要调用工具，评估置信度
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     """
-    推理节点：分析用户意图并决策
-    
-    这是Agent的第一个节点，负责：
-    1. 理解用户问题
-    2. 评估是否需要调用知识库工具
-    3. 检测敏感内容
-    4. 输出置信度评分
-    
-    Args:
-        state: 当前Agent状态
-    Returns:
-        状态更新字典
-        
-    TODO:
-    - 添加工具选择逻辑（未来可能有多个工具）
-    - 优化敏感词检测（与detector模块复用逻辑）
-    """
+    推理节点：LLM 绑定工具后自主决策
 
-    # 获取用户问题和对话历史
+    LLM 收到用户问题后可以：
+    - 调用 query_knowledge 查询知识库
+    - 调用 escalate_to_human 主动触发人工审核
+    - 直接输出回答（不调用任何工具）
+    """
     user_query = state["user_query"]
-    messages = state["messages"]
-    
-    # 构建推理提示词，包含用户问题和对话历史
-    reasoning_prompt = build_reasoning_prompt(user_query, messages)
-    
-    # 构造LLM输入，包含系统提示词、对话历史和推理提示词
+    history = state.get("messages", [])
+
+    llm = _build_llm_from_settings()
+    llm_with_tools = llm.bind_tools(get_all_tools())
+
+    # user_query 始终作为第一条 HumanMessage 传入，不重复添加到 state
     llm_messages = [
         SystemMessage(content=GAME_SUPPORT_SYSTEM_PROMPT),
-        *messages,
-        HumanMessage(content=reasoning_prompt),
+        HumanMessage(content=user_query),
+        *history,
     ]
 
-    # 创建LLM实例
-    llm = _build_llm_from_settings()
     try:
-        # 调用LLM实例，分析意图
-        result = await analyze_intent_llm(llm, llm_messages, user_query)
+        response: AIMessage = await llm_with_tools.ainvoke(llm_messages)
     except Exception as exc:
-        # LLM异常或JSON解析失败时，回退到保守默认值
-        result = ReasoningOutputSchema(
-            intent="查询游戏机制",
-            need_tool=True,
-            confidence=0.6,
-            has_sensitive=False,
-            sensitive_words=[],
-            reasoning=f"LLM解析失败，使用保守策略：优先走知识库，错误: {exc}",
-        )
-    
-    # 将推理结果存入metadata
-    reasoning_data = {
-        "intent": result.intent,
-        "need_tool": result.need_tool,
-        "confidence": result.confidence,
-        "has_sensitive": result.has_sensitive,
-        "sensitive_words": result.sensitive_words,
-        "reasoning": result.reasoning,
-        "node": "reasoning"
-    }
-    
-    # 更新metadata
+        # 降级：直接生成兜底回复，避免崩溃
+        response = AIMessage(content=f"抱歉，处理您的请求时出现问题，建议联系人工客服。（错误：{exc}）")
+
+    has_tool_calls = bool(getattr(response, "tool_calls", None))
+
     metadata = state.get("metadata", {})
-    metadata["reasoning"] = reasoning_data
-    
-    # 构建AI消息记录推理结果
-    ai_message = AIMessage(
-        content=f"[推理] 意图：{result.intent}，需要工具：{result.need_tool}"
-    )
-    
-    # workflow.set_entry_point("reasoning")的返回结果，包含推理结果、metadata和是否需要工具调用
-    return {
-        "messages": [ai_message],
-        "metadata": metadata,
-        # 标记是否需要工具调用（用于条件路由）
-        "_need_tool": result.need_tool
+    metadata["reasoning"] = {
+        "intent": "LLM工具调用决策",
+        "need_tool": has_tool_calls,
+        "node": "reasoning",
     }
 
-
-async def analyze_intent_llm(
-    llm: ChatOpenAI,
-    messages,
-    user_query: str
-) -> ReasoningOutputSchema:
-    """
-    使用LLM分析意图（异步真实网络请求）
-
-    1. 向大模型发起 ainvoke 异步请求
-    2. 解析模型返回 JSON
-    3. 用 Pydantic 严格校验输出结构
-    """
-    response = await llm.ainvoke(messages)
-    if not isinstance(response.content, str):
-        raise ValueError(f"模型返回内容类型错误: {type(response.content)}")
-
-    payload = _extract_json_block(response.content)
-    return ReasoningOutputSchema.model_validate(payload)
+    return {
+        "messages": [response],
+        "metadata": metadata,
+    }

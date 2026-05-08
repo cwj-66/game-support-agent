@@ -1,0 +1,10 @@
+model_list:
+  - model_name: claude-sonnet-4-6  
+    litellm_params:
+      model: deepseek/deepseek-chat         
+      api_key: "sk-f5ee391a65cb461fa6cddecb43c201c6"
+      api_base: "https://api.deepseek.com/v1"
+
+litellm_settings:
+  drop_params: true
+  

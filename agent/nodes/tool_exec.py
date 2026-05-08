@@ -1,107 +1,105 @@
 """
-执行 MCP 工具节点
-根据reasoning节点的决策，调用MCP工具获取知识
+通用工具执行节点
+读取 AIMessage.tool_calls，动态分发并执行对应工具
 """
 
 import json
 from datetime import datetime, timezone
 from typing import Dict, Any
-from langchain_core.messages import ToolMessage
+
+from langchain_core.messages import AIMessage, ToolMessage
 
 from ..state import AgentState
-from ..tools.mcp_adapter import create_knowledge_tool
+from ..tools import get_all_tools
 
 
-# 工具执行节点，根据reasoning节点的决策，决定是否调用工具，调用MCP工具获取知识
 async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     """
-    工具执行节点：调用MCP知识库工具
-    
+    工具执行节点：通用分发器
+
     职责：
-    1. 根据reasoning结果决定是否调用工具
-    2. 调用query_knowledge工具获取知识
-    3. 解析工具返回结果
-    4. 将知识添加到状态中
-    
-    Args:
-        state: 当前Agent状态
-        
-    Returns:
-        状态更新字典，包含工具调用结果
-        
-    TODO:
-    - 实现真实MCP工具调用
-    - 添加工具调用重试和错误处理
-    - 支持多个工具调用（并行）
+    1. 找到最后一条带 tool_calls 的 AIMessage
+    2. 依次执行每个工具调用
+    3. 将 ToolMessage 写回 messages
+    4. 若工具是 query_knowledge，解析 JSON 更新 metadata.knowledge_result
     """
-    user_query = state["user_query"]
-    tool_calls = state.get("tool_calls", [])
-    
-    # 创建MCP知识工具实例
-    knowledge_tool = create_knowledge_tool()
-    
-    # 记录工具调用开始
-    tool_call_record = {
-        "tool": "query_knowledge",
-        "input": user_query,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "status": "started"
+    messages = state.get("messages", [])
+
+    # 找最后一条带 tool_calls 的 AIMessage
+    last_ai: AIMessage | None = None
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            last_ai = msg
+            break
+
+    if not last_ai:
+        return {}
+
+    tools_map = {t.name: t for t in get_all_tools()}
+    tool_messages = []
+    tool_call_records = []
+    metadata = state.get("metadata", {})
+
+    for tc in last_ai.tool_calls:
+        tool_name: str = tc["name"]
+        tool_args: dict = tc["args"]
+        tool_call_id: str = tc["id"]
+
+        record = {
+            "tool": tool_name,
+            "input": tool_args,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": "started",
+        }
+
+        tool = tools_map.get(tool_name)
+        if tool is None:
+            record["status"] = "failed"
+            record["error"] = f"未知工具：{tool_name}"
+            tool_messages.append(ToolMessage(
+                content=json.dumps({"error": f"未知工具：{tool_name}"}, ensure_ascii=False),
+                name=tool_name,
+                tool_call_id=tool_call_id,
+            ))
+            tool_call_records.append(record)
+            continue
+
+        try:
+            result = await tool.ainvoke(tool_args)
+            result_str = str(result)
+
+            record["status"] = "completed"
+            record["output"] = result_str
+
+            # query_knowledge 返回 JSON，解析后存入 metadata
+            if tool_name == "query_knowledge":
+                try:
+                    metadata["knowledge_result"] = json.loads(result_str)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            tool_messages.append(ToolMessage(
+                content=result_str,
+                name=tool_name,
+                tool_call_id=tool_call_id,
+            ))
+
+        except Exception as e:
+            record["status"] = "failed"
+            record["error"] = str(e)
+            tool_messages.append(ToolMessage(
+                content=json.dumps(
+                    {"has_answer": False, "error": str(e)},
+                    ensure_ascii=False,
+                ),
+                name=tool_name,
+                tool_call_id=tool_call_id,
+            ))
+
+        tool_call_records.append(record)
+
+    return {
+        "messages": tool_messages,
+        "tool_calls": state.get("tool_calls", []) + tool_call_records,
+        "metadata": metadata,
     }
-    
-    try:
-        # 调用MCP工具并解析JSON结果
-        # MCPKnowledgeTool._arun 返回 JSON 字符串
-        raw_result = await knowledge_tool._arun(user_query)
-        knowledge_result = json.loads(raw_result)
-        if not isinstance(knowledge_result, dict):
-            raise ValueError("MCP工具返回结果不是JSON对象")
-        
-        # 更新调用记录
-        tool_call_record["status"] = "completed"
-        tool_call_record["output"] = knowledge_result
-        tool_call_record["has_answer"] = bool(knowledge_result.get("has_answer", False))
-        
-        # 创建ToolMessage记录结果
-        tool_message = ToolMessage(
-            content=json.dumps(knowledge_result, ensure_ascii=False),
-            name="query_knowledge",
-            tool_call_id=f"call_{len(tool_calls)}"
-        )
-
-        # 更新状态
-        return {
-            "messages": [tool_message],
-            "tool_calls": tool_calls + [tool_call_record],
-            "metadata": {
-                **state.get("metadata", {}),
-                "knowledge_result": knowledge_result,
-                "tool_exec_complete": True
-            }
-        }
-        
-    except Exception as e:
-        # 工具调用失败
-        tool_call_record["status"] = "failed"
-        tool_call_record["error"] = str(e)
-        
-        # 创建错误消息
-        error_message = ToolMessage(
-            content=json.dumps({
-                "has_answer": False,
-                "error": str(e),
-                "message": "知识库查询失败"
-            }, ensure_ascii=False),
-            name="query_knowledge",
-            tool_call_id=f"call_{len(tool_calls)}"
-        )
-        
-        return {
-            "messages": [error_message],
-            "tool_calls": tool_calls + [tool_call_record],
-            "metadata": {
-                **state.get("metadata", {}),
-                "tool_error": str(e),
-                "tool_exec_complete": False
-            }
-        }
-

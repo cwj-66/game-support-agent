@@ -6,25 +6,57 @@
 
 ```
 game-support-agent/
-├── mcp_servers/knowledge_server/  # SSE MCP Server
 ├── agent/                         # LangGraph 核心
-│   ├── graph.py                   # 主图、路由与 generate/detector 等
-│   ├── nodes/                     # 推理、工具执行、人工审核节点
-│   └── tools/                     # MCP 工具适配
+│   ├── graph.py                   # 主图编排、generate/detector/finish
+│   ├── state.py                   # Agent 状态
+│   ├── checkpointer.py            # 状态持久化
+│   ├── nodes/                     # 节点（推理、工具执行、人工审核）
+│   │   ├── reasoning.py
+│   │   ├── tool_exec.py
+│   │   └── human_node.py
+│   ├── tools/                     # MCP 工具适配
+│   │   ├── __init__.py
+│   │   └── mcp_adapter.py
+│   └── prompts/
+│       └── system.py              # 系统提示词
 ├── app/                           # FastAPI 服务
-│   ├── api/v1/                    # 对话和审核 API
+│   ├── main.py                    # 应用入口
 │   ├── core/                      # 配置、LLM 工厂、异常
+│   │   ├── config.py
+│   │   ├── llm.py
+│   │   └── exceptions.py
 │   └── models/                    # 数据模型
+│       ├── chat.py
+│       └── review.py
 ├── human_in_loop/                 # 重点模块
+│   ├── __init__.py
 │   ├── detector.py                # 中断检测（敏感词+置信度）
 │   ├── reviewer.py                # 三种审核操作
 │   ├── auditor.py                 # 审计日志
 │   └── schema.py                  # 数据结构
+├── mcp_servers/knowledge_server/  # SSE MCP Server
+│   ├── server.py                  # FastMCP、SSE 端点、API Key 中间件
+│   ├── client.py                  # 调用 RAG 的 httpx 客户端
+│   ├── auth.py                    # X-MCP-API-Key 验证
+│   └── models.py                  # 请求/响应模型
 ├── client/                        # 客户端工具
-│   ├── cli.py                     # 终端工具
+│   ├── cli.py                     # 终端交互工具
 │   └── web_ui.py                  # Streamlit 审核界面
+├── scripts/
+│   └── ingest_faq.py              # FAQ 数据导入 RAG
 ├── tests/                         # 测试
-└── data/                          # 示例原神 FAQ
+│   ├── conftest.py
+│   ├── test_agent.py
+│   ├── test_human_in_loop.py
+│   └── test_mcp_server.py
+├── data/
+│   └── faq.json                   # 示例原神 FAQ
+├── .env                           # 本地配置（不提交）
+├── .env.example                   # 配置模板
+├── .gitignore
+├── requirements.txt
+├── docker-compose.yml
+└── litellm_config.yaml            # LiteLLM 配置
 ```
 
 ## 核心特性
@@ -196,27 +228,34 @@ pytest --cov=agent --cov=human_in_loop --cov-report=html
 ```text
 server.py   # FastMCP、SSE、API Key 中间件、run_server（uvicorn）
 client.py   # 调用 RAG 的 httpx 客户端
-auth.py     # X-MCP-API-Key 与 MCP_API_KEY
-models.py
+auth.py     # X-MCP-API-Key 与 MCP_API_KEY 验证
+models.py   # 请求/响应模型
 ```
 
 ### agent/
 
 ```text
-graph.py         # 主图、generate_response_node（LLM 润色）、detector、finish
-state.py
-nodes/           # reasoning, tool_exec（create_knowledge_tool）, human 等
+graph.py         # 主图编排、generate_response_node（LLM 润色）、detector、finish
+state.py         # Agent 状态定义
+checkpointer.py  # 状态持久化
+nodes/
+  reasoning.py   # 推理节点
+  tool_exec.py   # 工具执行（create_knowledge_tool）
+  human_node.py  # 人工审核节点
 tools/
-  mcp_adapter.py # create_knowledge_tool、SSE 调用
-checkpointer.py
+  mcp_adapter.py # SSE 调用与工具适配
 prompts/
+  system.py      # 系统提示词
 ```
 
 ### human_in_loop/
 
 ```text
-detector.py    # 敏感词 + 置信度 + 工具失败等
-reviewer.py / auditor.py / schema.py
+__init__.py
+detector.py    # 敏感词 + 置信度 + 工具失败检测
+reviewer.py    # APPROVE / MODIFY / OVERRIDE
+auditor.py     # 审计日志
+schema.py      # 数据结构
 ```
 
 ## 待办事项
