@@ -47,12 +47,16 @@ def _build_llm_from_settings() -> ChatOpenAI:
 
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     """
-    推理节点：LLM 绑定工具后自主决策
+    推理节点：LLM 绑定工具后自主决策（ReAct 风格）
 
     LLM 收到用户问题后可以：
-    - 调用 query_knowledge 查询知识库
+    - 调用 query_knowledge 查询游戏知识库
+    - 调用 lookup_account 查询玩家账号状态
+    - 调用 create_ticket 创建客服工单
     - 调用 escalate_to_human 主动触发人工审核
     - 直接输出回答（不调用任何工具）
+
+    工具结果会追加到 messages，LLM 可多轮循环调用直到给出最终回复。
     """
     user_query = state["user_query"]
     history = state.get("messages", [])
