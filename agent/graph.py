@@ -32,9 +32,6 @@ async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "gener
             if getattr(msg, "tool_calls", None):
                 return "tool_exec"
             break
-    # 兼容旧 reasoning_node 的 need_tool 字段
-    if state.get("metadata", {}).get("reasoning", {}).get("need_tool", False):
-        return "tool_exec"
     return "generate"
 
 
@@ -81,7 +78,6 @@ async def detector_node(state: AgentState) -> Dict[str, Any]:
     1. 敏感词检测
     2. 置信度阈值判断
     
-    TODO: 接入真实InterruptDetector
     """
     final_response = state.get("final_response", "")
     metadata = state.get("metadata", {})
@@ -118,30 +114,35 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
     """
     生成最终回复节点
 
-    优先级：人工 OVERRIDE/MODIFY > LLM 润色知识库结果 > 兜底回复
+    结合用户问题和完整对话历史，用客服提示词生成最终回复
     """
-    from langchain_core.messages import HumanMessage, AIMessage
+    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+    from agent.prompts.system import CUSTOMER_SERVICE_PROMPT
 
-    metadata = state.get("metadata", {})
-    knowledge = metadata.get("knowledge_result", {})
     human_review = state.get("human_review")
     user_query = state.get("user_query", "")
+    messages = state.get("messages", [])
 
-    # ── 人工干预优先：OVERRIDE 或 MODIFY 直接使用人工内容，跳过 LLM ──
+    # ── 人工干预优先：OVERRIDE 或 MODIFY 直接使用人工内容 ──
     if human_review and human_review.get("action") in ["OVERRIDE", "MODIFY"]:
         final_response = human_review.get("modified_content", "[人工处理完成]")
 
-    elif knowledge.get("has_answer"):
-        # ── 调用 LLM 将知识库原始信息润色为友好客服口吻 ──
-        raw_answer = knowledge.get("answer", "")
-        prompt = (
-            f"你是原神游戏的专业客服，请用专业、友好的口吻回复玩家问题。\n\n"
-            f"玩家问题：{user_query}\n\n"
-            f"知识库参考信息：{raw_answer}\n\n"
-            f"请直接给出回复，不要重复问题，语言简洁自然。"
-        )
+    elif messages:
+        # ── 把完整对话历史喂给 LLM，让它综合生成回复 ──
         llm = get_chat_model()
-        ai_result = await llm.ainvoke([HumanMessage(content=prompt)])
+        
+        # 如果有上一轮的摘要，作为上下文补充（不占用大量token）
+        session_summary = state.get("session_summary")
+        summary_messages = []
+        if session_summary:
+            summary_messages = [SystemMessage(content=f"【上一轮对话摘要】{session_summary}")]
+        
+        ai_result = await llm.ainvoke([
+            SystemMessage(content=CUSTOMER_SERVICE_PROMPT),
+            *summary_messages,
+            HumanMessage(content=user_query),
+            *messages,
+        ])
         final_response = ai_result.content
 
     else:
@@ -158,15 +159,32 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
 async def finish_node(state: AgentState) -> Dict[str, Any]:
     """
     结束节点
-    
-    清理工作，记录最终状态
+
+    记录最终状态，并将本轮对话压缩为一句话摘要，
+    供下一轮对话作为上下文使用。
     """
+    from langchain_core.messages import HumanMessage as HM, SystemMessage as SM
+
+    user_query = state.get("user_query", "")
+    final_response = state.get("final_response", "")
+    session_summary = None
+
+    # 用LLM把本轮对话压缩成一句话
+    if user_query and final_response:
+        llm = get_chat_model()
+        result = await llm.ainvoke([
+            SM(content="你是一个对话摘要助手。请用一句话总结以下对话的核心内容，不超过50字。只输出摘要本身，不要加任何前缀。"),
+            HM(content=f"用户问题：{user_query}\nAgent回复：{final_response}"),
+        ])
+        session_summary = result.content.strip()
+
     return {
+        "session_summary": session_summary,
         "metadata": {
             **state.get("metadata", {}),
             "completed": True,
             "finished_at": datetime.now(timezone.utc).isoformat(),
-        }
+        },
     }
 
 

@@ -92,6 +92,9 @@ class AgentState(TypedDict):
     # Agent生成的最终回复（审核前）
     final_response: Optional[str]
     
+    # 本轮对话的一句话摘要，下一轮作为上下文喂给LLM
+    session_summary: Optional[str]
+    
     # 运行时元数据
     metadata: Dict[str, Any]
 
@@ -115,6 +118,7 @@ def create_initial_state(session_id: str, user_query: str) -> AgentState:
         "human_review": None,
         "tool_calls": [],
         "final_response": None,
+        "session_summary": None,
         "metadata": {
             "created_at": datetime.now(timezone.utc).isoformat(),
             "version": "1.0.0"
