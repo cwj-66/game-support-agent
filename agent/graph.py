@@ -11,9 +11,8 @@ from langgraph.graph import StateGraph, END
 from .state import AgentState
 from .nodes import reasoning_node, tool_exec_node, human_node
 from .checkpointer import get_checkpointer
-from human_in_loop.detector import InterruptDetector
+from human_in_loop.detector import get_default_detector
 from app.core.llm import get_chat_model
-from app.core.config import get_settings
 
 
 # reasoning 出口：AIMessage 带 tool_calls → tool_exec，否则 → generate
@@ -77,23 +76,21 @@ async def detector_node(state: AgentState) -> Dict[str, Any]:
     检查是否需要触发human-in-loop：
     1. 敏感词检测
     2. 置信度阈值判断
-    
     """
     final_response = state.get("final_response", "")
     metadata = state.get("metadata", {})
-    reasoning = metadata.get("reasoning", {})
     
-    # 从配置中读取敏感词和阈值，避免硬编码
-    settings = get_settings()
-    detector = InterruptDetector(
-        sensitive_words=settings.SENSITIVE_WORDS,
-        confidence_threshold=settings.HIL_CONFIDENCE_THRESHOLD,
-    )
+    # 置信度由 generate_response_node 计算并存入 metadata
+    # 没有时传 None，不会误触发置信度中断
+    confidence = metadata.get("confidence")
+    
+    # 使用默认检测器（敏感词列表和阈值由 detector.py 管理）
+    detector = get_default_detector()
     
     # 执行检测，检查是否需要触发human-in-loop
     decision = detector.detect(
         content=final_response,
-        confidence=reasoning.get("confidence", 0.5),
+        confidence=confidence,
         metadata={"tool_calls": state.get("tool_calls", [])}
     )
     
@@ -150,9 +147,32 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
 
     ai_message = AIMessage(content=final_response)
 
+    # ── 评估最终回复的置信度 ──
+    confidence = None
+    if final_response and not (human_review and human_review.get("action") in ["OVERRIDE", "MODIFY"]):
+        try:
+            llm = get_chat_model()
+            score_result = await llm.ainvoke([
+                SystemMessage(content=(
+                    "你是一个回复质量评估助手。"
+                    "请根据以下用户问题和客服回复，评估回复的准确性和完整性，"
+                    "返回一个0到1之间的置信度分数（如0.9表示非常确定，0.4表示不太确定）。"
+                    "只输出一个纯数字，不要加任何文字。"
+                )),
+                HumanMessage(content=f"用户问题：{user_query}\n客服回复：{final_response}"),
+            ])
+            confidence = float(score_result.content.strip())
+            confidence = max(0.0, min(1.0, confidence))  # 限制在 0-1 范围内
+        except (ValueError, Exception):
+            confidence = None
+
+    metadata = state.get("metadata", {})
+    metadata["confidence"] = confidence
+
     return {
         "messages": [ai_message],
         "final_response": final_response,
+        "metadata": metadata,
     }
 
 
@@ -167,7 +187,10 @@ async def finish_node(state: AgentState) -> Dict[str, Any]:
 
     user_query = state.get("user_query", "")
     final_response = state.get("final_response", "")
-    session_summary = None
+
+    # 获取已有的历史摘要，追加本轮的一句话摘要
+    previous_summary = state.get("session_summary") or ""
+    new_summary = None
 
     # 用LLM把本轮对话压缩成一句话
     if user_query and final_response:
@@ -176,7 +199,16 @@ async def finish_node(state: AgentState) -> Dict[str, Any]:
             SM(content="你是一个对话摘要助手。请用一句话总结以下对话的核心内容，不超过50字。只输出摘要本身，不要加任何前缀。"),
             HM(content=f"用户问题：{user_query}\nAgent回复：{final_response}"),
         ])
-        session_summary = result.content.strip()
+        new_summary = result.content.strip()
+
+    # 追加到历史摘要后面
+    if new_summary:
+        if previous_summary:
+            session_summary = f"{previous_summary} | {new_summary}"
+        else:
+            session_summary = new_summary
+    else:
+        session_summary = previous_summary or None
 
     return {
         "session_summary": session_summary,

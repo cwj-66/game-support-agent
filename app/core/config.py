@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         MODEL_NAME: 使用的模型名称
         
         HIL_ENABLED: 是否启用Human-in-loop
-        HIL_CONFIDENCE_THRESHOLD: 置信度阈值
+        中断检测的敏感词和置信度阈值已迁移至 human_in_loop.detector 管理
     """
     
     # 基础配置
@@ -74,16 +74,7 @@ class Settings(BaseSettings):
         default=True,
         description="是否启用人工审核"
     )
-    HIL_CONFIDENCE_THRESHOLD: float = Field(
-        default=0.6,
-        ge=0.0,
-        le=1.0,
-        description="置信度阈值，低于此值触发人工审核"
-    )
-    SENSITIVE_WORDS: List[str] = Field(
-        default=["封号", "退款", "投诉", "举报", "盗号"],
-        description="敏感词列表"
-    )
+    # 已迁移至 detector.py 管理
     
     # 安全配置
     MCP_API_KEY: Optional[str] = Field(
