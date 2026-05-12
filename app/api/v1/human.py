@@ -3,14 +3,20 @@
 审核员对Agent输出进行APPROVE/MODIFY/OVERRIDE操作
 """
 
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Path
+from datetime import datetime, timezone
+from typing import Optional
 
-from app.core.config import Settings, get_settings
+from fastapi import APIRouter, Path
+from langgraph.types import Command
+
 from app.core.exceptions import (
     HumanReviewNotPendingException,
-    SessionNotFoundException,
     ValidationException
+)
+from app.core.pending_store import (
+    get_all_pending,
+    remove_pending,
+    get_pending,
 )
 from app.models.review import (
     ReviewAction,
@@ -18,138 +24,151 @@ from app.models.review import (
     PendingReviewsResponse,
     ReviewTask,
     ReviewHistoryResponse,
-    ReviewHistoryItem
 )
+from agent.graph import graph
 
 
 router = APIRouter(prefix="/human", tags=["人工审核"])
 
 
+def _graph_config(session_id: str) -> dict:
+    """构建 LangGraph 恢复执行所需的 config"""
+    return {
+        "configurable": {
+            "thread_id": session_id,
+            "checkpoint_ns": "game_support_agent",
+        }
+    }
+
+
 @router.get("/pending", response_model=PendingReviewsResponse)
-async def list_pending_reviews(
-    settings: Settings = Depends(get_settings)
-) -> PendingReviewsResponse:
+async def list_pending_reviews() -> PendingReviewsResponse:
     """
     获取待审核任务列表
-    
-    返回所有等待人工审核的对话任务
+
+    从内存公告板读取所有处于 interrupt 挂起状态的会话
     """
-    # TODO: 从内存/Redis/数据库查询待审核任务
-    # TODO: 实现任务排序（优先级、等待时间）
-    
-    # 模拟数据
-    mock_tasks = [
-        ReviewTask(
-            review_id="rev_001",
-            session_id="sess_123",
-            user_query="如何申请退款？",
-            agent_response="关于退款...",
-            interrupt_reason="检测到敏感词: 退款",
-            risk_level="high",
-            created_at="2024-01-01T10:00:00",
-            wait_time_seconds=300
-        )
-    ]
-    
-    return PendingReviewsResponse(
-        total=len(mock_tasks),
-        items=mock_tasks
-    )
+    pending = get_all_pending()
+    now = datetime.now(timezone.utc)
+
+    tasks: list[ReviewTask] = []
+    for session_id, payload in pending.items():
+        created_at = payload.get("timestamp", now.isoformat())
+        try:
+            elapsed = (now - datetime.fromisoformat(created_at)).total_seconds()
+        except (ValueError, TypeError):
+            elapsed = 0
+
+        tasks.append(ReviewTask(
+            review_id=session_id,
+            session_id=session_id,
+            user_query=payload.get("user_query", ""),
+            agent_response=payload.get("content", ""),
+            interrupt_reason=payload.get("interrupt_reason", "未知"),
+            risk_level=payload.get("interrupt_level", "medium"),
+            created_at=created_at,
+            wait_time_seconds=int(elapsed),
+        ))
+
+    return PendingReviewsResponse(total=len(tasks), items=tasks)
 
 
 @router.post("/review/{session_id}", response_model=ReviewResponse)
 async def submit_review(
     session_id: str,
     action: ReviewAction,
-    settings: Settings = Depends(get_settings)
 ) -> ReviewResponse:
     """
     提交人工审核操作
-    
+
     三种操作类型：
     - APPROVE: 原样通过Agent的回复
     - MODIFY: 修改后通过
     - OVERRIDE: 人工完全重写回复
-    
+
     流程：
-    1. 验证session_id存在且有待审核内容
-    2. 验证操作参数
-    3. 应用审核结果到Agent状态
-    4. 继续执行Agent图
-    5. 记录审计日志
-    6. 返回结果
+    1. 验证 session 处于挂起状态
+    2. 调用 graph.ainvoke(Command(resume=...)) 恢复图执行
+    3. 从公告板移除该会话
+    4. 返回最终结果
     """
-    # 参数校验
-    if action.action in ["MODIFY", "OVERRIDE"] and not action.modified_content:
+    # 校验会话是否在等待审核
+    if not get_pending(session_id):
+        raise HumanReviewNotPendingException(session_id)
+
+    # MODIFY / OVERRIDE 必须提供修改内容
+    if action.action in ("MODIFY", "OVERRIDE") and not action.modified_content:
         raise ValidationException(
-            "MODIFY和OVERRIDE操作必须提供modified_content",
-            field="modified_content"
+            "MODIFY 和 OVERRIDE 操作必须提供 modified_content",
+            field="modified_content",
         )
-    
-    # TODO: 检查session是否有待审核内容
-    # TODO: 调用human_node继续执行
-    # TODO: 记录审计日志
-    
-    # 确定最终回复内容
-    if action.action == "APPROVE":
-        final_response = "[原Agent回复内容]"
-    else:
-        final_response = action.modified_content or "[人工处理]"
-    
+
+    # 构建恢复数据 —— 这就是 interrupt() 在 human_node 中的返回值
+    resume_data = {
+        "action": action.action,
+        "reviewer_id": action.reviewer_id,
+        "modified_content": action.modified_content,
+        "notes": action.notes,
+    }
+
+    # 恢复图执行，human_node 从 interrupt() 处继续运行
+    result = await graph.ainvoke(
+        Command(resume=resume_data),
+        config=_graph_config(session_id),
+    )
+
+    # 审核完成，从公告板移除
+    remove_pending(session_id)
+
+    final_response = result.get("final_response", "[人工处理完成]")
+    processed_at = datetime.now(timezone.utc).isoformat()
+
     return ReviewResponse(
         success=True,
         review_id=f"rev_{session_id}",
         session_id=session_id,
         action=action.action,
         final_response=final_response,
-        processed_at="2024-01-01T00:00:00"  # TODO: 真实时间
-    )
-
-
-@router.get("/history", response_model=ReviewHistoryResponse)
-async def get_review_history(
-    reviewer_id: str = None,
-    limit: int = 50,
-    settings: Settings = Depends(get_settings)
-) -> ReviewHistoryResponse:
-    """
-    获取审核历史
-    
-    可按审核员筛选，支持分页
-    """
-    # TODO: 从审计日志查询历史
-    # TODO: 实现分页
-    
-    return ReviewHistoryResponse(
-        total=0,
-        items=[]
+        processed_at=processed_at,
     )
 
 
 @router.get("/status/{session_id}")
 async def get_review_status(
     session_id: str = Path(..., description="会话ID"),
-    settings: Settings = Depends(get_settings)
 ):
     """
     查询会话的审核状态
-    
+
     返回：
     - 是否需要审核
     - 当前审核进度
-    - 审核历史
     """
-    # TODO: 查询会话的审核状态
-    
+    payload = get_pending(session_id)
+    if payload:
+        return {
+            "session_id": session_id,
+            "has_pending_review": True,
+            "interrupt_reason": payload.get("interrupt_reason"),
+            "interrupt_level": payload.get("interrupt_level"),
+            "waiting_since": payload.get("timestamp"),
+        }
     return {
         "session_id": session_id,
         "has_pending_review": False,
         "pending_review_id": None,
-        "review_history": []
     }
 
 
-# TODO: 未来扩展
-# - 添加批量审核API
-# - 添加审核任务分配API（分配给特定审核员）
-# - 添加审核统计API
+@router.get("/history", response_model=ReviewHistoryResponse)
+async def get_review_history(
+    reviewer_id: Optional[str] = None,
+    limit: int = 50,
+) -> ReviewHistoryResponse:
+    """
+    获取审核历史
+
+    当前返回空列表，等 AuditLogger 支持按审核员查询后接入
+    """
+    # TODO: 从 AuditLogger 读取审核历史
+    return ReviewHistoryResponse(total=0, items=[])

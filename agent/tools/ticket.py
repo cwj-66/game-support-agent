@@ -30,6 +30,7 @@ def create_ticket(user_id: str, issue_type: str, description: str) -> str:
     }.get(issue_type, "3-5 个工作日")
 
     result = {
+        "_health": {"ok": True, "confidence": 0.95, "message": None},
         "ticket_id": ticket_id,
         "user_id": user_id,
         "issue_type": issue_type,

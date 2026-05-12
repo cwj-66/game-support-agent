@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(pip list *)",
+      "Bash(\"C:/Users/陈卫健/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_agent.py::TestAgentNodes::test_reasoning_node tests/test_agent.py::TestAgentNodes::test_tool_exec_node -v --tb=long)",
+      "Bash(\"C:/Users/陈卫健/AppData/Local/Programs/Python/Python312/python.exe\" -c \"from app.api.v1.human import router; from app.api.v1.chat import router; from app.core.pending_store import *; print\\('imports OK'\\)\")",
+      "Bash(\"C:/Users/陈卫健/AppData/Local/Programs/Python/Python312/python.exe\" -c \"from agent.graph import graph, run_agent, stream_agent; from agent.nodes import reasoning_node, tool_exec_node, generate_response_node, detector_node, finish_node, human_node; print\\('All imports OK'\\); print\\('graph nodes:', list\\(graph.nodes.keys\\(\\)\\)\\)\")"
+    ]
+  }
+}

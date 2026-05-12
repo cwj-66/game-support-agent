@@ -6,6 +6,7 @@ Human-in-loop 模块
 - reviewer: 人工审核操作（APPROVE/MODIFY/OVERRIDE）
 - auditor: 审计链记录
 - schema: 数据结构定义
+- 升等检测逻辑已合并到 agent/tools/escalate.py
 
 使用示例：
     from human_in_loop import InterruptDetector, HumanReviewer
@@ -34,6 +35,8 @@ __all__ = [
     "InterruptDecision",
     "InterruptDecisionDataclass",
     
+    # 升等检测器（已迁移至 agent.tools.escalate）
+
     # 审核器
     "HumanReviewer",
     "ReviewActionType",

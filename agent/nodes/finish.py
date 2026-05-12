@@ -1,0 +1,48 @@
+"""
+结束节点
+记录最终状态，压缩本轮对话为一句话摘要供下一轮使用
+"""
+
+from datetime import datetime, timezone
+from typing import Dict, Any
+
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from ..state import AgentState
+from app.core.llm import get_chat_model
+
+
+async def finish_node(state: AgentState) -> Dict[str, Any]:
+    """
+    结束节点
+
+    记录最终状态，并将本轮对话压缩为一句话摘要，
+    供下一轮对话作为上下文使用。
+    """
+    user_query = state.get("user_query", "")
+    final_response = state.get("final_response", "")
+
+    previous_summary = state.get("session_summary") or ""
+    new_summary = None
+
+    if user_query and final_response:
+        llm = get_chat_model()
+        result = await llm.ainvoke([
+            SystemMessage(content="你是一个对话摘要助手。请用一句话总结以下对话的核心内容，不超过50字。只输出摘要本身，不要加任何前缀。"),
+            HumanMessage(content=f"用户问题：{user_query}\nAgent回复：{final_response}"),
+        ])
+        new_summary = result.content.strip()
+
+    if new_summary:
+        session_summary = f"{previous_summary} | {new_summary}" if previous_summary else new_summary
+    else:
+        session_summary = previous_summary or None
+
+    return {
+        "session_summary": session_summary,
+        "metadata": {
+            **state.get("metadata", {}),
+            "completed": True,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }

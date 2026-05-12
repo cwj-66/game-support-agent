@@ -10,22 +10,22 @@ from .schema import InterruptDecision
 
 class InterruptDetector:
     """
-    中断检测器
-    
+    中断检测器（安全兜底层）
+
     职责：
-    1. 敏感词列表匹配（封号、退款、投诉等）
-    2. LLM置信度评分低于阈值判断
-    3. 返回结构化的InterruptDecision
-    
-    使用双重过滤策略：
-    - 敏感词触发：强制进入人工审核
-    - 置信度触发：可配置阈值，低于阈值进入审核
-    
+    1. 检测 LLM 回复是否含违禁内容（越狱、涉黄、涉政、诱导等）
+    2. LLM 置信度评分低于阈值判断
+    3. 返回结构化的 InterruptDecision
+
+    注意：
+    - 此检测器不负责业务判断（封号/退款等由 LLM 主动调用 escalate_to_human 处理）
+    - 只拦截 LLM 被诱导输出的违禁/有害内容
+
     TODO:
-    - 实现更复杂的敏感词匹配（如近义词）
-    - 添加基于语义的敏感内容检测
+    - 实现更复杂的语义敏感内容检测
+    - 添加基于用户行为模式的异常检测
     """
-    
+
     def __init__(
         self,
         sensitive_words: Optional[List[str]] = None,
@@ -34,16 +34,23 @@ class InterruptDetector:
     ):
         """
         初始化检测器
-        
+
         Args:
-            sensitive_words: 敏感词列表，默认使用内置列表
+            sensitive_words: 违禁词列表，默认使用内置列表
             confidence_threshold: 置信度阈值（0-1）
             case_sensitive: 是否区分大小写
         """
         self.sensitive_words = sensitive_words or [
-            "封号", "解封", "退款", "投诉", "举报",
-            "盗号", "外挂", "作弊", "违规", "起诉",
-            "律师", "12315", "消协", "法院"
+            # 诱导私下交易/泄露隐私
+            "私下转账", "加我微信", "私聊我", "内部渠道", "私下解决",
+            # 冒充官方身份
+            "我是腾讯官方", "我是客服主管", "我是系统管理员", "绕过系统",
+            # 涉黄
+            "色情", "裸体", "性交", "卖淫", "嫖娼",
+            # 暴力/自伤
+            "如何自杀", "如何自残", "制作炸弹", "如何伤害",
+            # 涉政（根据业务合规要求）
+            "法轮功", "分裂国家", "推翻政府",
         ]
         self.confidence_threshold = confidence_threshold
         self.case_sensitive = case_sensitive
@@ -97,22 +104,24 @@ class InterruptDetector:
             confidence_triggered = True
             reasons.append(f"置信度 {confidence:.2f} 低于阈值 {self.confidence_threshold}")
         
-        # 3. 其他触发条件（可扩展）
-        # 例如：工具调用失败、内容过长等
+        # 3. 工具调用失败检测（与 EscalateDetector 互补，最终防线）
+        tool_failed = False
         if metadata and metadata.get("tool_calls"):
             tool_calls = metadata["tool_calls"]
             if any(tc.get("status") == "failed" for tc in tool_calls):
                 reasons.append("工具调用失败")
-                detected_words.append("tool_error")
-        
+                tool_failed = True
+
         # 确定是否中断
-        should_interrupt = len(detected_words) > 0 or confidence_triggered or len(reasons) > 0
-        
+        should_interrupt = len(detected_words) > 0 or confidence_triggered or tool_failed
+
         # 确定风险等级
         if detected_words:
-            level = "high"  # 敏感词触发为高风险
+            level = "high"      # 敏感词 → 高风险
+        elif tool_failed:
+            level = "medium"    # 工具失败 → 中风险
         elif confidence_triggered:
-            level = "medium"  # 置信度问题为中风险
+            level = "medium"    # 置信度低 → 中风险
         else:
             level = "low"
         

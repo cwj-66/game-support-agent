@@ -5,6 +5,7 @@
 
 import time
 import json
+import traceback
 from datetime import datetime
 from typing import AsyncGenerator
 
@@ -22,6 +23,7 @@ from app.models.chat import (
 )
 from agent.graph import run_agent, stream_agent
 from agent.checkpointer import get_checkpointer
+from app.core.pending_store import add_pending
 
 # 兼容不同版本 LangGraph 的 GraphInterrupt
 try:
@@ -95,9 +97,12 @@ async def send_message(
         )
 
     except Exception as e:
-        # GraphInterrupt：图被 interrupt() 真实挂起（实装后触发）
+        # GraphInterrupt：图被 interrupt() 真实挂起
         if GraphInterrupt and isinstance(e, GraphInterrupt):
             execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+            # 提取中断载荷并写入公告板，供审核接口读取
+            interrupt_payload = e.args[0] if e.args else {}
+            add_pending(request.session_id, interrupt_payload)
             return ChatResponse(
                 session_id=request.session_id,
                 response="您的消息涉及敏感操作，已转交人工客服处理，请稍候。",
@@ -105,6 +110,7 @@ async def send_message(
                 review_id=request.session_id,
                 metadata={"execution_time_ms": execution_time_ms},
             )
+        traceback.print_exc()
         raise AgentExecutionException(str(e))
 
 

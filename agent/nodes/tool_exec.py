@@ -5,12 +5,13 @@
 
 import json
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from langchain_core.messages import AIMessage, ToolMessage
 
 from ..state import AgentState
 from ..tools import get_all_tools
+from ..tools.escalate import get_default_escalate_detector
 
 
 async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
@@ -20,8 +21,9 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     职责：
     1. 找到最后一条带 tool_calls 的 AIMessage
     2. 依次执行每个工具调用
-    3. 将 ToolMessage 写回 messages
-    4. 若工具是 query_knowledge，解析 JSON 更新 metadata.knowledge_result
+    3. 若执行 escalate_to_human → 直接设 interrupt_info 升等
+    4. 所有工具执行完后，若轮次达上限 → 跑 check_batch() 兜底拉闸
+    5. 将 ToolMessage 写回 messages
     """
     messages = state.get("messages", [])
 
@@ -36,9 +38,17 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
         return {}
 
     tools_map = {t.name: t for t in get_all_tools()}
-    tool_messages = []
-    tool_call_records = []
+    tool_messages: List[ToolMessage] = []
+    tool_call_records: List[Dict[str, Any]] = []
     metadata = state.get("metadata", {})
+    interrupt_info = None
+
+    # 计算 ReAct 轮次
+    prev_tool_calls = state.get("tool_calls", [])
+    non_escalate_count = sum(
+        1 for tc in prev_tool_calls if tc.get("tool") != "escalate_to_human"
+    )
+    react_round = non_escalate_count + 1
 
     for tc in last_ai.tool_calls:
         tool_name: str = tc["name"]
@@ -67,7 +77,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
         try:
             result = await tool.ainvoke(tool_args)
             result_str = str(result)
-
             record["status"] = "completed"
             record["output"] = result_str
 
@@ -77,6 +86,22 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                     metadata["knowledge_result"] = json.loads(result_str)
                 except (json.JSONDecodeError, ValueError):
                     pass
+
+            # escalate_to_human：LLM 主动升等，直接设 interrupt_info
+            if tool_name == "escalate_to_human":
+                try:
+                    data = json.loads(result_str)
+                except (json.JSONDecodeError, ValueError):
+                    data = {}
+                interrupt_info = {
+                    "should_interrupt": True,
+                    "reason": data.get("reason", "LLM主动请求人工介入"),
+                    "level": data.get("level", "high"),
+                    "sensitive_words": [],
+                    "confidence": None,
+                    "pending_content": None,
+                    "source": "llm_escalate",
+                }
 
             tool_messages.append(ToolMessage(
                 content=result_str,
@@ -98,8 +123,27 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
 
         tool_call_records.append(record)
 
-    return {
+    # LLM 没有主动升等，但轮次达到上限 → 系统兜底拉闸
+    if interrupt_info is None:
+        detector = get_default_escalate_detector()
+        if react_round >= detector.max_react_rounds:
+            decision = detector.check_batch(tool_call_records, react_round)
+            if decision.should_interrupt:
+                interrupt_info = {
+                    "should_interrupt": True,
+                    "reason": decision.reason,
+                    "level": decision.level,
+                    "sensitive_words": [],
+                    "confidence": None,
+                    "pending_content": None,
+                    "source": "auto_escalate",
+                }
+
+    result: Dict[str, Any] = {
         "messages": tool_messages,
         "tool_calls": state.get("tool_calls", []) + tool_call_records,
         "metadata": metadata,
     }
+    if interrupt_info is not None:
+        result["interrupt_info"] = interrupt_info
+    return result

@@ -19,6 +19,7 @@ def lookup_account(user_id: str) -> str:
 
     if last_digit <= 3:
         result = {
+            "_health": {"ok": True, "confidence": 0.9, "message": None},
             "uid": user_id,
             "status": "banned",
             "ban_reason": "违反用户协议第3.2条：使用外挂程序",
@@ -27,6 +28,7 @@ def lookup_account(user_id: str) -> str:
         }
     else:
         result = {
+            "_health": {"ok": True, "confidence": 0.9, "message": None},
             "uid": user_id,
             "status": "active",
             "ban_reason": None,

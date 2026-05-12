@@ -45,9 +45,11 @@ async def human_node(state: AgentState) -> Dict[str, Any]:
     # 准备中断载荷，推送给前端展示
     interrupt_payload = {
         "session_id": session_id,
+        "user_query": user_query,
         "content": final_response,
         "interrupt_reason": interrupt_info.get("reason"),
         "interrupt_level": interrupt_info.get("level"),
+        "source": interrupt_info.get("source"),
         "waiting_for": "human_review",
         "options": ["APPROVE", "MODIFY", "OVERRIDE"],
         "timestamp": datetime.now(timezone.utc).isoformat(),

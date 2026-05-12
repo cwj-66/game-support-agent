@@ -31,6 +31,8 @@ class InterruptInfo(TypedDict, total=False):
     confidence: Optional[float]
     # 原始节点输出需要审核
     pending_content: Optional[str]
+    # 中断来源：llm_escalate（LLM主动转人工）| detector（规则兜底）
+    source: Optional[str]
 
 
 class HumanReviewResult(TypedDict, total=False):
@@ -67,7 +69,7 @@ class AgentState(TypedDict):
         session_id: 会话唯一标识
         interrupt_info: 中断触发信息
         human_review: 人工审核结果
-        tool_calls: 已执行的MCP工具调用记录
+        tool_calls: 已执行的工具调用记录
         final_response: 最终回复内容（待审核或直接发送）
         metadata: 额外运行时元数据
     """

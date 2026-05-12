@@ -3,6 +3,7 @@
 定义应用级别的异常类和错误响应格式
 """
 
+import traceback
 from typing import Any, Dict, Optional
 from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse
@@ -112,9 +113,14 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
     通用异常处理器
-    
-    捕获所有未处理的异常
+
+    捕获所有未处理的异常，打印完整堆栈到控制台
     """
+    print(f"\n{'='*60}")
+    print(f"[ERROR] {request.method} {request.url.path}")
+    print(f"[ERROR] {type(exc).__name__}: {exc}")
+    traceback.print_exc()
+    print(f"{'='*60}\n")
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={

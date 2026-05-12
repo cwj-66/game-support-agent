@@ -24,9 +24,30 @@ class KnowledgeQueryInput(BaseModel):
 def _fallback(message: str) -> str:
     """返回统一的降级 JSON，避免 LangGraph 崩溃"""
     return json.dumps(
-        {"has_answer": False, "message": message, "confidence": 0.0},
+        {
+            "has_answer": False,
+            "message": message,
+            "confidence": 0.0,
+            "_health": {"ok": False, "confidence": 0.0, "message": message},
+        },
         ensure_ascii=False,
     )
+
+
+def _inject_health(json_str: str) -> str:
+    """向工具返回的 JSON 注入 _health 字段，供升等检测器通用判断"""
+    try:
+        data = json.loads(json_str)
+    except (json.JSONDecodeError, ValueError):
+        return json_str
+    has_answer = data.get("has_answer", True)
+    confidence = data.get("confidence")
+    data["_health"] = {
+        "ok": has_answer,
+        "confidence": confidence,
+        "message": None if has_answer else "知识库未找到相关答案",
+    }
+    return json.dumps(data, ensure_ascii=False)
 
 
 class MCPKnowledgeTool(BaseTool):
@@ -94,7 +115,7 @@ class MCPKnowledgeTool(BaseTool):
                 for item in result.content:
                     text = getattr(item, "text", None)
                     if text:
-                        return text
+                        return _inject_health(text)
 
             return _fallback("MCP 服务返回内容为空")
 
