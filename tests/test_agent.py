@@ -47,17 +47,15 @@ class TestAgentState:
         review: HumanReviewResult = {
             "action": "MODIFY",
             "reviewer_id": "admin_001",
-            "timestamp": "2024-01-01T00:00:00",
             "modified_content": "修改后的内容",
             "notes": "测试",
-            "approved": True
         }
-        
+
         state = create_initial_state("test", "测试")
         state["human_review"] = review
-        
+
         assert state["human_review"]["action"] == "MODIFY"
-        assert state["human_review"]["approved"] is True
+        assert state["human_review"]["modified_content"] == "修改后的内容"
 
 
 class TestCheckpointer:
@@ -97,16 +95,16 @@ class TestAgentNodes:
     async def test_tool_exec_node(self):
         """测试工具执行节点"""
         from agent.nodes.tool_exec import tool_exec_node
-        
+
         state = create_initial_state("test_002", "原神角色介绍")
-        
-        with patch("agent.nodes.tool_exec.MCPKnowledgeTool") as mock_tool:
+
+        with patch("agent.tools.query_knowledge.KnowledgeTool") as mock_tool:
             mock_instance = MagicMock()
             mock_instance._arun = AsyncMock(return_value='{"has_answer": true}')
             mock_tool.return_value = mock_instance
-            
+
             result = await tool_exec_node(state)
-            
+
             assert "messages" in result
             assert "tool_calls" in result
             assert "metadata" in result
@@ -223,7 +221,7 @@ class TestAgentIntegration:
 
 
 # TODO: 需要补充的测试
-# - TestAgentTools: MCP工具适配器测试
+# - TestKnowledgeTool: 知识工具适配器测试
 # - TestAgentPrompts: 提示词模板测试
 # - TestAgentStreaming: 流式输出测试
 # - TestAgentConcurrency: 并发会话测试

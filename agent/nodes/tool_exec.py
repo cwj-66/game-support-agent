@@ -87,6 +87,23 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                 except (json.JSONDecodeError, ValueError):
                     pass
 
+            # lookup_account 返回封号状态 → 自动升等，不依赖 LLM 判断
+            if tool_name == "lookup_account" and interrupt_info is None:
+                try:
+                    data = json.loads(result_str)
+                except (json.JSONDecodeError, ValueError):
+                    data = {}
+                if data.get("status") == "banned":
+                    interrupt_info = {
+                        "should_interrupt": True,
+                        "reason": f"账号 {data.get('uid', '未知')} 处于封禁状态：{data.get('ban_reason', '未知原因')}",
+                        "level": "high",
+                        "sensitive_words": [],
+                        "confidence": None,
+                        "pending_content": None,
+                        "source": "auto_escalate",
+                    }
+
             # escalate_to_human：LLM 主动升等，直接设 interrupt_info
             if tool_name == "escalate_to_human":
                 try:

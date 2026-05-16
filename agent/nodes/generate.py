@@ -32,7 +32,7 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
         session_summary = state.get("session_summary")
         summary_messages = []
         if session_summary:
-            summary_messages = [SystemMessage(content=f"【上一轮对话摘要】{session_summary}")]
+            summary_messages = [SystemMessage(content=f"【历史对话摘要】{session_summary}")]
 
         ai_result = await llm.ainvoke([
             SystemMessage(content=CUSTOMER_SERVICE_PROMPT),

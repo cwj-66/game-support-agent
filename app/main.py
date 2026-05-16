@@ -34,18 +34,18 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     
     # 启动逻辑
-    print(f"🚀 启动 {settings.APP_NAME} v{settings.APP_VERSION}")
+    print(f"[STARTUP] {settings.APP_NAME} v{settings.APP_VERSION}")
+    print(f"[STARTUP] Access at http://127.0.0.1:{settings.PORT}")
+    print(f"[STARTUP] API docs at http://127.0.0.1:{settings.PORT}/docs")
     
     # TODO: 检查RAG服务健康状态
-    # TODO: 初始化MCP客户端
     # TODO: 加载敏感词库
     
     yield
     
     # 关闭逻辑
-    print("🛑 关闭应用")
+    print("[SHUTDOWN] Application stopped")
     
-    # TODO: 关闭MCP客户端连接
     # TODO: 清理其他资源
 
 
@@ -60,7 +60,7 @@ def create_application() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
-        description="基于MCP + LangGraph的游戏客服Agent，支持Human-in-loop",
+        description="基于LangGraph的游戏客服Agent，支持Human-in-loop",
         docs_url="/docs",
         redoc_url="/redoc",
         lifespan=lifespan
@@ -113,13 +113,11 @@ async def root():
 @app.get("/health")
 async def health_check():
     """健康检查端点"""
-    # TODO: 检查RAG、MCP等服务健康状态
     return {
         "status": "healthy",
         "version": get_settings().APP_VERSION,
         "checks": {
             "rag_service": "unknown",  # TODO: 真实检查
-            "mcp_server": "unknown"
         }
     }
 

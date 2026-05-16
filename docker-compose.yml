@@ -7,16 +7,14 @@ version: '3.8'
 
 services:
   # ==================== RAG 服务 ====================
-  # enterprise-rag 项目（假设已有镜像）
   rag-service:
-    image: enterprise-rag:latest  # 请替换为实际镜像
+    image: enterprise-rag:latest
     container_name: game-support-rag
     ports:
       - "8000:8000"
     environment:
       - PORT=8000
       - LOG_LEVEL=INFO
-      # 其他RAG服务配置...
     volumes:
       - rag-data:/app/data
     healthcheck:
@@ -24,26 +22,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    networks:
-      - game-support-network
-    # 如果RAG服务需要单独部署，注释掉此服务
-
-  # ==================== MCP 服务器 ====================
-  mcp-server:
-    build:
-      context: .
-      dockerfile: Dockerfile.mcp  # 需要单独创建
-    container_name: game-support-mcp
-    ports:
-      - "8001:8001"
-    environment:
-      - PORT=8001
-      - RAG_SERVICE_URL=http://rag-service:8000
-      - MCP_API_KEY=${MCP_API_KEY}
-      - LOG_LEVEL=INFO
-    depends_on:
-      rag-service:
-        condition: service_healthy
     networks:
       - game-support-network
 
@@ -58,7 +36,6 @@ services:
     environment:
       - PORT=8002
       - RAG_SERVICE_URL=http://rag-service:8000
-      - MCP_SERVER_URL=http://mcp-server:8001
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MODEL_NAME=${MODEL_NAME:-qwen-turbo}
@@ -71,7 +48,6 @@ services:
       - ./logs:/app/logs
       - ./data:/app/data
     depends_on:
-      - mcp-server
       - rag-service
     networks:
       - game-support-network
@@ -86,7 +62,7 @@ services:
   web-ui:
     build:
       context: .
-      dockerfile: Dockerfile.web  # 需要单独创建
+      dockerfile: Dockerfile.web
     container_name: game-support-web
     ports:
       - "8501:8501"
@@ -97,49 +73,10 @@ services:
     networks:
       - game-support-network
 
-  # ==================== Redis（可选，用于生产环境） ====================
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: game-support-redis
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis-data:/data
-  #   networks:
-  #     - game-support-network
-
-  # ==================== PostgreSQL（可选，用于生产环境） ====================
-  # postgres:
-  #   image: postgres:15-alpine
-  #   container_name: game-support-postgres
-  #   ports:
-  #     - "5432:5432"
-  #   environment:
-  #     - POSTGRES_USER=game_support
-  #     - POSTGRES_PASSWORD=${DB_PASSWORD}
-  #     - POSTGRES_DB=game_support_db
-  #   volumes:
-  #     - postgres-data:/var/lib/postgresql/data
-  #   networks:
-  #     - game-support-network
-
-# ==================== 卷定义 ====================
 volumes:
   rag-data:
     driver: local
-  # redis-data:
-  #   driver: local
-  # postgres-data:
-  #   driver: local
 
-# ==================== 网络定义 ====================
 networks:
   game-support-network:
     driver: bridge
-
-# ==================== 使用说明 ====================
-# 1. 确保 .env 文件已配置
-# 2. 启动所有服务：docker-compose up -d
-# 3. 查看日志：docker-compose logs -f agent-api
-# 4. 停止服务：docker-compose down
-# 5. 完全重置：docker-compose down -v（删除数据卷）

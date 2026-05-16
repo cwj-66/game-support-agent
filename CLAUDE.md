@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-这是一个面向游戏客服场景的 AI Agent，基于 **MCP 协议 + LangGraph** 构建。核心目标是通过 LLM 自动处理玩家游戏客服请求（查询攻略、账号状态、创建工单等），同时通过 **Human-in-loop 机制** 确保安全合规——LLM 无法处理或触犯安全规则时转人工审核。
+这是一个面向游戏客服场景的 AI Agent，基于 **LangGraph** 构建。核心目标是通过 LLM 自动处理玩家游戏客服请求（查询攻略、账号状态、创建工单等），同时通过 **Human-in-loop 机制** 确保安全合规——LLM 无法处理或触犯安全规则时转人工审核。
 
 ## 技术栈
 
@@ -11,7 +11,6 @@
 | AI 编排 | LangGraph / langchain-core / langchain-openai |
 | LLM | 阿里云 DashScope (qwen-turbo) 优先，OpenAI 兜底 |
 | API 服务 | FastAPI + Pydantic |
-| MCP 协议 | Python MCP SDK (SSE 模式) |
 | 持久化 | LangGraph MemorySaver（内存，当前演示用） |
 | 审核界面 | Streamlit |
 | 终端工具 | rich 库 |
@@ -31,7 +30,8 @@ game-support-agent/
 │   │   └── human_node.py           # 人工审核节点（interrupt 挂起 + 恢复）
 │   ├── tools/
 │   │   ├── __init__.py             # get_all_tools() 工厂，暴露 4 个工具
-│   │   ├── mcp_adapter.py          # MCPKnowledgeTool（SSE 调用知识库）
+│   │   ├── query_knowledge.py        # KnowledgeTool（HTTP 直接调用 RAG 知识库）
+│   │   ├── rag_client.py            # RAG HTTP 客户端（直接调 enterprise-rag）
 │   │   ├── escalate.py             # 转人工工具 + EscalateDetector 升等检测（两路触发）
 │   │   ├── account.py              # lookup_account（查询账号状态）
 │   │   └── ticket.py               # create_ticket（创建工单）
@@ -54,11 +54,6 @@ game-support-agent/
 │   ├── reviewer.py                 # HumanReviewer（APPROVE / MODIFY / OVERRIDE）
 │   ├── auditor.py                  # AuditLogger（JSON 文件审计链）
 │   └── schema.py                   # 数据结构（dataclass + TypedDict）
-├── mcp_servers/knowledge_server/   # SSE MCP Server
-│   ├── server.py                   # FastMCP SSE 端点（/sse，心跳 15s）
-│   ├── client.py                   # RAGClient（httpx 调用 enterprise-rag）
-│   ├── auth.py                     # X-MCP-API-Key 认证
-│   └── models.py                   # 请求/响应模型
 ├── client/
 │   ├── cli.py                      # 终端 CLI（rich 库）
 │   └── web_ui.py                   # Streamlit 审核界面
@@ -68,13 +63,13 @@ game-support-agent/
 │   ├── conftest.py                 # Fixtures
 │   ├── test_agent.py               # Agent 状态/节点/图/集成测试
 │   ├── test_human_in_loop.py       # HIL 核心测试
-│   └── test_mcp_server.py          # MCP 模型/客户端/认证测试
+│   └── test_rag_client.py          # RAG 客户端测试
 ├── data/
 │   └── faq.json                    # 30 条《原神》FAQ 示例数据
 ├── .env.example                    # 配置模板
 ├── .gitignore                      # 忽略 venv/ __pycache__/ .env
 ├── requirements.txt
-└── docker-compose.yml              # 4 个服务：rag / mcp / agent-api / web-ui
+└── docker-compose.yml              # 3 个服务：rag / agent-api / web-ui
 ```
 
 ## 架构说明
@@ -165,7 +160,7 @@ game-support-agent/
 3. **不要删除或重命名 human_in_loop/ 下的任何模块**，detector、reviewer、auditor 都有明确职责。
 4. **所有工具必须通过 `agent/tools/__init__.py` 的 `get_all_tools()` 暴露**。新增工具请走这个工厂。
 5. **LLM 配置优先走阿里云 DashScope**，OpenAI 只做兜底。Key 配在 .env，不上传 GitHub。
-6. **MCP 知识工具必须做安全降级**。MCPKnowledgeTool 已实现连接失败/超时/认证错误的分层处理，新增类似工具也要遵循。
+6. **知识工具必须做安全降级**。KnowledgeTool 已实现连接失败/超时的分层处理，新增类似工具也要遵循。
 7. **Agent 状态持久化目前用 MemorySaver（内存）**，重启后状态丢失。生产环境需替换。
 8. **代码注释和 Docstring 用中文**，便于团队理解。
 9. `.claude/` 目录和 `.env` 不上传 GitHub（已在 `.gitignore` 中配置）。
@@ -179,9 +174,6 @@ pip install -r requirements.txt
 # 复制配置模板
 cp .env.example .env
 # 然后编辑 .env 填入 LLM API Key 等
-
-# 启动 MCP 知识服务器
-python -c "import asyncio; from mcp_servers.knowledge_server.server import run_server; asyncio.run(run_server())"
 
 # 启动 FastAPI 服务
 python -m app.main
@@ -214,18 +206,17 @@ docker-compose up -d
 ### 已完成
 - [x] LangGraph 图结构定义（6 个节点 + 条件边 + ReAct 循环）
 - [x] 4 个客服工具（知识库查询、账号查询、创建工单、转人工）
-- [x] MCP SSE 协议集成（知识服务器 + 客户端适配器）
+- [x] RAG 知识库 HTTP 集成（直接调用 RAG 服务）
 - [x] Human-in-loop 完整链路（两层检测 + interrupt + 三种操作 + 审计日志）
 - [x] FastAPI 服务层（对话接口 + 审核接口 + SSE 流式）
 - [x] Streamlit 审核界面
 - [x] 终端 CLI
-- [x] 测试套件（Agent + HIL + MCP）
+- [x] 测试套件（Agent + HIL + RAG）
 - [x] 多轮对话摘要（session_summary 跨轮传递）
 - [x] FAQ 数据和导入脚本
 
 ### 待开发
-- [ ] MCP 知识服务器入口标准化（`python -m` 方式启动）
-- [ ] RAG/MCP 健康检查接入应用生命周期
+- [ ] RAG 健康检查接入应用生命周期
 - [ ] 生产级状态持久化（Redis/Postgres）
 - [ ] 审核队列管理和任务分配
 - [ ] 测试覆盖率提升（尤其端到端和 SSE 集成测试）

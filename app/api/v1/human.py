@@ -26,6 +26,7 @@ from app.models.review import (
     ReviewHistoryResponse,
 )
 from agent.graph import graph
+from agent.state import HumanReviewResult
 
 
 router = APIRouter(prefix="/human", tags=["人工审核"])
@@ -103,8 +104,8 @@ async def submit_review(
             field="modified_content",
         )
 
-    # 构建恢复数据 —— 这就是 interrupt() 在 human_node 中的返回值
-    resume_data = {
+    # 构建恢复数据 —— 必须与 HumanReviewResult 字段一致
+    resume_data: HumanReviewResult = {
         "action": action.action,
         "reviewer_id": action.reviewer_id,
         "modified_content": action.modified_content,

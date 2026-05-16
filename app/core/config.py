@@ -44,11 +44,7 @@ class Settings(BaseSettings):
     # 外部服务配置
     RAG_SERVICE_URL: str = Field(
         default="http://localhost:8000",
-        description="enterprise-rag服务地址"
-    )
-    MCP_SERVER_URL: str = Field(
-        default="http://localhost:8001",
-        description="MCP SSE服务器地址"
+        description="RAG知识库服务地址"
     )
     
     # LLM配置（双通道：阿里云优先，OpenAI兜底）
@@ -77,10 +73,6 @@ class Settings(BaseSettings):
     # 已迁移至 detector.py 管理
     
     # 安全配置
-    MCP_API_KEY: Optional[str] = Field(
-        default=None,
-        description="MCP层API Key"
-    )
     API_KEY: Optional[str] = Field(
         default=None,
         description="FastAPI层API Key"
@@ -94,6 +86,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"  # 忽略 .env 中的未知字段（如旧版 MCP 配置）
 
 
 # 全局配置实例

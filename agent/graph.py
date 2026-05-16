@@ -130,12 +130,30 @@ async def run_agent(
 
     result = await graph.ainvoke(initial_state, config)
 
+    # LangGraph interrupt() 在某些版本中不抛异常，而是正常返回带 __interrupt__ 的结果
+    raw_interrupt = result.get("__interrupt__")
+    interrupt_payload = None
+    if raw_interrupt is not None:
+        # 不同版本可能返回 Interrupt 对象、元组、或列表
+        if hasattr(raw_interrupt, "value"):
+            # LangGraph Interrupt 对象，取 .value 属性
+            interrupt_payload = raw_interrupt.value
+        elif isinstance(raw_interrupt, (tuple, list)) and len(raw_interrupt) > 0:
+            item = raw_interrupt[0]
+            interrupt_payload = item.value if hasattr(item, "value") else item
+        elif isinstance(raw_interrupt, dict):
+            interrupt_payload = raw_interrupt
+        else:
+            interrupt_payload = raw_interrupt
+
     return {
         "session_id": session_id,
-        "final_response": result.get("final_response"),
+        "final_response": result.get("final_response") or "",
         "messages": result.get("messages", []),
         "metadata": result.get("metadata", {}),
         "interrupt_info": result.get("interrupt_info"),
+        "has_interrupt": raw_interrupt is not None,
+        "__interrupt__": interrupt_payload,
     }
 
 

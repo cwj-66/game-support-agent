@@ -76,19 +76,26 @@ async def send_message(
 
         execution_time_ms = int((time.perf_counter() - start_time) * 1000)
 
-        # 检查是否触发了 human-in-loop 中断（detector 决策）
-        interrupt_info = result.get("interrupt_info")
-        requires_review = bool(interrupt_info and interrupt_info.get("should_interrupt"))
-        review_id = request.session_id if requires_review else None
+        # 检查是否触发了 interrupt（兼容不同 LangGraph 版本的中断返回方式）
+        interrupt_payload = result.get("__interrupt__")
+        if result.get("has_interrupt") or interrupt_payload:
+            if not isinstance(interrupt_payload, dict):
+                interrupt_payload = {}
+            add_pending(request.session_id, interrupt_payload)
+            return ChatResponse(
+                session_id=request.session_id,
+                response="您的消息涉及敏感操作，已转交人工客服处理，请稍候。",
+                requires_review=True,
+                review_id=request.session_id,
+                metadata={"execution_time_ms": execution_time_ms},
+            )
 
+        final_response = result.get("final_response") or ""
         return ChatResponse(
             session_id=request.session_id,
-            response=(
-                result.get("final_response") or
-                ("您的消息涉及敏感操作，已转交人工客服处理，请稍候。" if requires_review else "")
-            ),
-            requires_review=requires_review,
-            review_id=review_id,
+            response=final_response,
+            requires_review=False,
+            review_id=None,
             sources=result.get("metadata", {}).get("sources"),
             metadata={
                 "execution_time_ms": execution_time_ms,
@@ -97,10 +104,11 @@ async def send_message(
         )
 
     except Exception as e:
+        exc_name = type(e).__name__
         # GraphInterrupt：图被 interrupt() 真实挂起
-        if GraphInterrupt and isinstance(e, GraphInterrupt):
+        # 兼容不同 LangGraph 版本的异常类型名
+        if "GraphInterrupt" in exc_name or "Interrupt" in exc_name:
             execution_time_ms = int((time.perf_counter() - start_time) * 1000)
-            # 提取中断载荷并写入公告板，供审核接口读取
             interrupt_payload = e.args[0] if e.args else {}
             add_pending(request.session_id, interrupt_payload)
             return ChatResponse(
@@ -135,7 +143,13 @@ async def get_chat_history(
         }
     }
 
+    # 兼容 LangGraph 不同版本的 checkpoint 查询
     checkpoint_tuple = checkpointer.get_tuple(config)
+    if checkpoint_tuple is None:
+        # 尝试不带 checkpoint_ns 查询
+        config_no_ns = {"configurable": {"thread_id": session_id}}
+        checkpoint_tuple = checkpointer.get_tuple(config_no_ns)
+
     if not checkpoint_tuple:
         raise SessionNotFoundException(session_id)
 

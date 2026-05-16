@@ -42,6 +42,19 @@ async def human_node(state: AgentState) -> Dict[str, Any]:
     final_response = state.get("final_response", "")
     interrupt_info = state.get("interrupt_info") or {}
 
+    # 如果从 escalate 路径进入（未经过 generate），final_response 为空
+    # 优先用对话历史中最后一条纯文本 AIMessage，否则用中断原因兜底
+    if not final_response:
+        from langchain_core.messages import AIMessage
+        for msg in reversed(state.get("messages", [])):
+            if isinstance(msg, AIMessage):
+                content = getattr(msg, "content", "")
+                if content and isinstance(content, str) and not getattr(msg, "tool_calls", None):
+                    final_response = content
+                    break
+        if not final_response:
+            final_response = f"[Agent未生成回复] 中断原因：{interrupt_info.get('reason', '未知')}"
+
     # 准备中断载荷，推送给前端展示
     interrupt_payload = {
         "session_id": session_id,
@@ -56,7 +69,7 @@ async def human_node(state: AgentState) -> Dict[str, Any]:
     }
 
     # 触发 LangGraph interrupt，图执行在此挂起
-    # 外部通过 graph.ainvoke 恢复时传入人工审核 JSON
+    # 外部通过 graph.ainvoke(Command(resume=...)) 恢复时传入人工审核数据
     print(f"[Human Node] 触发中断，等待人工审核: {session_id}")
     human_result: HumanReviewResult = interrupt(interrupt_payload)
 

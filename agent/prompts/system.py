@@ -18,7 +18,7 @@ GAME_SUPPORT_SYSTEM_PROMPT = """你是《原神》游戏客服系统的决策模
 
 【决策规则】
 1. 游戏玩法/规则问题 → query_knowledge
-2. 账号/封禁/充值问题 → lookup_account → 视情况 create_ticket 或 escalate_to_human
+2. 账号/封禁/充值问题 → lookup_account → 账号被封禁时必须 escalate_to_human；正常状态则视情况 create_ticket
 3. 需要留存记录的诉求 → create_ticket
 4. 工具无法解决 / 涉及隐私修改 → escalate_to_human
 

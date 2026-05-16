@@ -16,53 +16,53 @@ ReviewAction = Literal["APPROVE", "MODIFY", "OVERRIDE"]
 class InterruptInfo(TypedDict, total=False):
     """
     中断信息结构
-    
-    当触发human-in-loop时，记录中断原因和上下文
+
+    由 tool_exec（escalate 两路）或 detector_node（安全兜底）写入，
+    供 human_node 读取做审核展示，route_from_tool_exec / route_from_detector 拿它做路由判断
     """
     # 是否触发中断
     should_interrupt: bool
-    # 中断原因：敏感词/置信度低/其他
+    # 中断原因，例如 '检测到敏感词: 退款' 或 '置信度 0.45 低于阈值 0.6'
     reason: str
-    # 风险等级：low/medium/high
+    # 风险等级: low / medium / high
     level: str
-    # 检测到的敏感词（如果有）
+    # 检测到的敏感词列表，没有则为空
     sensitive_words: List[str]
-    # 置信度分数（0-1）
+    # 触发中断时的置信度分数（0-1），未评估时为 None
     confidence: Optional[float]
-    # 原始节点输出需要审核
+    # 待审核的原始内容，审核员看到的就是这个
     pending_content: Optional[str]
-    # 中断来源：llm_escalate（LLM主动转人工）| detector（规则兜底）
+    # 中断来源: llm_escalate（LLM主动升等）/ auto_escalate（系统兜底）/ detector（安全检测）
     source: Optional[str]
 
 
 class HumanReviewResult(TypedDict, total=False):
     """
-    人工审核结果
-    
-    人工操作员对Agent输出的审核决定
+    人工审核结果 —— 全链路唯一标准
+
+    流向：human.py 构建 → Command(resume=...) → interrupt() 返回
+         → human_node 写入 state.human_review → generate_response_node 读取
+
+    total=False 表示所有字段均可选，但 action 和 reviewer_id 实际必有
     """
-    # 操作类型
+    # 审核操作: APPROVE=通过原文 / MODIFY=修改后通过 / OVERRIDE=完全重写
     action: ReviewAction
-    # 操作员ID
+    # 审核员标识，例如 "admin_001"
     reviewer_id: str
-    # 审核时间
-    timestamp: str
-    # 修改后的内容（MODIFY时使用）
+    # MODIFY 或 OVERRIDE 时必填，人工编写的新回复内容；APPROVE 时为 None
     modified_content: Optional[str]
-    # 备注说明
+    # 审核备注，审核员可选的文字说明
     notes: Optional[str]
-    # 是否通过审核
-    approved: bool
 
 
 # LangGraph主状态定义
 class AgentState(TypedDict):
     """
     LangGraph 主状态定义
-    
+
     这是贯穿整个Agent执行流程的状态容器，
     会被checkpointer持久化，支持断点恢复。
-    
+
     Attributes:
         messages: 对话历史（使用add_messages reducer自动追加）
         user_query: 当前用户原始查询
@@ -73,31 +73,23 @@ class AgentState(TypedDict):
         final_response: 最终回复内容（待审核或直接发送）
         metadata: 额外运行时元数据
     """
-    # 核心对话历史，使用add_messages自动合并
+    # 对话历史，add_messages reducer 自动追加，HumanMessage / AIMessage / ToolMessage 都在这
     messages: Annotated[List[BaseMessage], add_messages]
-    
-    # 当前用户查询
+    # 本轮用户原始问题，整个执行过程中不变
     user_query: str
-    
-    # 会话ID，用于状态隔离
+    # 会话唯一标识，也是 checkpointer 的 thread_id
     session_id: str
-    
-    # 中断触发信息（由detector节点设置）
+    # 中断触发信息，由 tool_exec（escalate）或 detector_node（安全兜底）设置
     interrupt_info: Optional[InterruptInfo]
-    
-    # 人工审核结果（由human_node等待设置）
+    # 人工审核结果，human_node 从 interrupt() 获取并写入，generate_response_node 读取
     human_review: Optional[HumanReviewResult]
-    
-    # 工具调用记录，用于审计
+    # 全部轮次的工具调用审计记录，tool_exec_node 每轮追加（非覆盖）
     tool_calls: List[Dict[str, Any]]
-    
-    # Agent生成的最终回复（审核前）
+    # 最终回复，generate_response_node 生成，可能是 LLM 写的也可能是人工覆盖的
     final_response: Optional[str]
-    
-    # 本轮对话的一句话摘要，下一轮作为上下文喂给LLM
+    # 本轮对话的一句话摘要，finish_node 生成，下一轮作为上下文喂给 LLM
     session_summary: Optional[str]
-    
-    # 运行时元数据
+    # 运行时元数据，各节点以读-改-写模式往里塞东西，同一个 key 后来者覆盖前者
     metadata: Dict[str, Any]
 
 # 创建对话初始状态
