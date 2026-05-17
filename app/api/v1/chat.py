@@ -71,6 +71,7 @@ async def send_message(
     try:
         result = await run_agent(
             session_id=request.session_id,
+            user_id=request.user_id,
             user_query=request.message,
         )
 
@@ -99,7 +100,6 @@ async def send_message(
             sources=result.get("metadata", {}).get("sources"),
             metadata={
                 "execution_time_ms": execution_time_ms,
-                "confidence": result.get("metadata", {}).get("confidence"),
             },
         )
 
@@ -210,6 +210,7 @@ async def stream_chat(
         try:
             async for chunk in stream_agent(
                 session_id=request.session_id,
+                user_id=request.user_id,
                 user_query=request.message,
             ):
                 if not chunk:

@@ -2,7 +2,7 @@
 Human-in-loop 模块
 
 核心功能：
-- detector: 中断触发检测（敏感词+置信度）
+- detector: 中断触发检测（敏感词+工具失败）
 - reviewer: 人工审核操作（APPROVE/MODIFY/OVERRIDE）
 - auditor: 审计链记录
 - schema: 数据结构定义
@@ -10,10 +10,10 @@ Human-in-loop 模块
 
 使用示例：
     from human_in_loop import InterruptDetector, HumanReviewer
-    
+
     detector = InterruptDetector()
-    decision = detector.detect(content, confidence)
-    
+    decision = detector.detect(content)
+
     if decision.should_interrupt:
         # 进入人工审核流程
         pass

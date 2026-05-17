@@ -59,14 +59,18 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     工具结果会追加到 messages，LLM 可多轮循环调用直到给出最终回复。
     """
     user_query = state["user_query"]
+    user_id = state.get("user_id", "")
     history = state.get("messages", [])
+
+    system_prompt = GAME_SUPPORT_SYSTEM_PROMPT
+    if user_id:
+        system_prompt += f"\n\n当前玩家 UID：{user_id}"
 
     llm = _build_llm_from_settings()
     llm_with_tools = llm.bind_tools(get_all_tools())
 
-    # user_query 始终作为第一条 HumanMessage 传入，不重复添加到 state
     llm_messages = [
-        SystemMessage(content=GAME_SUPPORT_SYSTEM_PROMPT),
+        SystemMessage(content=system_prompt),
         HumanMessage(content=user_query),
         *history,
     ]

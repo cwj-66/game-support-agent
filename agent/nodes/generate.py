@@ -47,27 +47,7 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
 
     ai_message = AIMessage(content=final_response)
 
-    # 评估最终回复的置信度
-    confidence = None
-    if final_response and not (human_review and human_review.get("action") in ["OVERRIDE", "MODIFY"]):
-        try:
-            llm = get_chat_model()
-            score_result = await llm.ainvoke([
-                SystemMessage(content=(
-                    "你是一个回复质量评估助手。"
-                    "请根据以下用户问题和客服回复，评估回复的准确性和完整性，"
-                    "返回一个0到1之间的置信度分数（如0.9表示非常确定，0.4表示不太确定）。"
-                    "只输出一个纯数字，不要加任何文字。"
-                )),
-                HumanMessage(content=f"用户问题：{user_query}\n客服回复：{final_response}"),
-            ])
-            confidence = float(score_result.content.strip())
-            confidence = max(0.0, min(1.0, confidence))
-        except (ValueError, Exception):
-            confidence = None
-
     metadata = state.get("metadata", {})
-    metadata["confidence"] = confidence
 
     return {
         "messages": [ai_message],

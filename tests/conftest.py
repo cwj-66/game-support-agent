@@ -62,8 +62,7 @@ def mock_interrupt_decision():
         "should_interrupt": True,
         "reason": "检测到敏感词",
         "level": "high",
-        "sensitive_words": ["投诉"],
-        "confidence": 0.3
+        "sensitive_words": ["投诉"]
     }
 
 

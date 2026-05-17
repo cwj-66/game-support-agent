@@ -19,9 +19,9 @@ from human_in_loop.schema import InterruptDecision
 class EscalateDetector:
     """升等检测器：轮次到上限时做兜底检测，判断工具执行结果是否需要转人工"""
 
-    def __init__(self, max_react_rounds: int = 10, confidence_threshold: float = 0.6):
+    def __init__(self, max_react_rounds: int = 10, rag_confidence_threshold: float = 0.5):
         self.max_react_rounds = max_react_rounds
-        self.confidence_threshold = confidence_threshold
+        self.rag_confidence_threshold = rag_confidence_threshold
 
     def check_batch(
         self,
@@ -67,9 +67,10 @@ class EscalateDetector:
                 if level not in ("medium", "high"):
                     level = "medium"
 
-            confidence = health.get("confidence")
-            if confidence is not None and confidence < self.confidence_threshold:
-                reasons.append(f"工具 {tool_name} 置信度 {confidence:.2f} 过低")
+            # RAG 检索相关性过低 → LLM 可能基于不靠谱资料产生幻觉
+            rag_confidence = health.get("confidence")
+            if rag_confidence is not None and rag_confidence < self.rag_confidence_threshold:
+                reasons.append(f"工具 {tool_name} 检索相关性 {rag_confidence:.2f} 低于阈值 {self.rag_confidence_threshold}")
                 level = "high"
 
         return InterruptDecision(
@@ -77,7 +78,6 @@ class EscalateDetector:
             reason="; ".join(reasons) if reasons else "未触发中断",
             level=level,
             sensitive_words=[],
-            confidence=None,
         )
 
 
@@ -96,12 +96,14 @@ def get_default_escalate_detector() -> EscalateDetector:
 
 @tool
 def escalate_to_human(reason: str) -> str:
-    """当遇到以下情况时调用此工具，将对话移交人工客服：
-    - 用户涉及账号封禁、实名认证、退款等敏感操作
-    - 工具查询无结果或执行失败，无法回答问题
-    - 知识库中找不到相关信息
-    - 多次尝试后仍无法给出可信答复
-    - 用户情绪激动或多次表达不满
+    """将对话移交人工客服。仅在以下情况调用，不要作为首选：
+    - query_knowledge 查询无结果或置信度过低，无法回答问题
+    - 用户明确要求执行需要人工权限的操作（如实际解封账号、退款打款、身份核实）
+    - 用户多次表达不满或情绪激动，需要人工安抚
+    - 多轮尝试后仍无法给出可信答复
+
+    注意：涉及封号、退款等话题时，应先调 query_knowledge 查询处理流程和规则告知用户。
+    只有在知识库无法解答、或用户要求实际执行操作时才调此工具。
 
     Args:
         reason: 具体说明为何需要人工介入，客服将直接看到此内容

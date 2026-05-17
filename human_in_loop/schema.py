@@ -24,14 +24,12 @@ class InterruptDecision:
         reason: 中断原因说明
         level: 风险等级 (low/medium/high)
         sensitive_words: 检测到的敏感词
-        confidence: 置信度分数（触发原因）
     """
     should_interrupt: bool
     reason: str
     level: str = "low"  # low/medium/high
     sensitive_words: List[str] = field(default_factory=list)
-    confidence: Optional[float] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典，用于序列化"""
         return {
@@ -39,7 +37,6 @@ class InterruptDecision:
             "reason": self.reason,
             "level": self.level,
             "sensitive_words": self.sensitive_words,
-            "confidence": self.confidence
         }
 
 

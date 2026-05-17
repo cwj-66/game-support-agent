@@ -226,7 +226,7 @@ docker-compose up -d
 
 ## 给 Claude Code 的提示
 
-- 遇到不确定的架构决策先问我，不要自作主张修改 graph 结构。
+- 遇到不确定的架构决策先问我，不要自作主张修改 graph 结构，不要不经过同意就修改代码。
 - 不确定某个模块职责时，先阅读该模块的文件头 docstring，里面有清晰说明。
 - 新增工具记得在 `agent/tools/__init__.py` 注册，并在 `agent/prompts/system.py` 的 `GAME_SUPPORT_SYSTEM_PROMPT` 中添加说明。
 - 这个文件不上传到 GitHub（已在 `.gitignore` 中配置）。

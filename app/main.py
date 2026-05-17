@@ -1,7 +1,15 @@
 """
 FastAPI 入口
 整合所有API路由和全局配置
+
+注意：LangSmith 环境变量必须在所有 LangChain 导入之前生效。
+最稳方案是在进程启动前导出，或在此处用 load_dotenv 加载 .env 到 os.environ。
 """
+
+# 在所有 import 之前，先把 .env 加载到 os.environ
+# 这样 LangChain 导入时就能读到 LANGCHAIN_TRACING_V2 等变量
+from dotenv import load_dotenv
+load_dotenv()
 
 import os
 from contextlib import asynccontextmanager
@@ -10,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings, Settings
+
 from app.core.exceptions import (
     AppException,
     app_exception_handler,
@@ -32,12 +41,14 @@ async def lifespan(app: FastAPI):
     - 关闭连接
     """
     settings = get_settings()
-    
+
     # 启动逻辑
     print(f"[STARTUP] {settings.APP_NAME} v{settings.APP_VERSION}")
     print(f"[STARTUP] Access at http://127.0.0.1:{settings.PORT}")
     print(f"[STARTUP] API docs at http://127.0.0.1:{settings.PORT}/docs")
-    
+    if settings.LANGCHAIN_TRACING_V2 and settings.LANGCHAIN_API_KEY:
+        print(f"[STARTUP] LangSmith tracing enabled (project: {settings.LANGCHAIN_PROJECT})")
+
     # TODO: 检查RAG服务健康状态
     # TODO: 加载敏感词库
     

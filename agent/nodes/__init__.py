@@ -5,7 +5,7 @@ Agent 节点模块
 - reasoning: LLM自主决策（ReAct 风格）
 - tool_exec: 通用工具执行分发器
 - generate: 客服回复生成
-- detector: 中断检测（敏感词 + 置信度）
+- detector: 中断检测（敏感词 + 工具失败）
 - human: 人工审核挂起与恢复
 - finish: 对话摘要及结束
 """

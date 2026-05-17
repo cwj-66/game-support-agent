@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         MODEL_NAME: 使用的模型名称
         
         HIL_ENABLED: 是否启用Human-in-loop
-        中断检测的敏感词和置信度阈值已迁移至 human_in_loop.detector 管理
+        中断检测的敏感词在 human_in_loop.detector 中管理
     """
     
     # 基础配置
@@ -78,6 +78,20 @@ class Settings(BaseSettings):
         description="FastAPI层API Key"
     )
     
+    # LangSmith 可观测性配置
+    LANGCHAIN_TRACING_V2: bool = Field(
+        default=False,
+        description="是否启用LangSmith追踪"
+    )
+    LANGCHAIN_API_KEY: Optional[str] = Field(
+        default=None,
+        description="LangSmith API Key"
+    )
+    LANGCHAIN_PROJECT: str = Field(
+        default="game-support-agent",
+        description="LangSmith项目名称"
+    )
+
     # 日志配置
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
     LOG_DIR: str = Field(default="./logs", description="日志目录")

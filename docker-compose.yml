@@ -41,7 +41,6 @@ services:
       - MODEL_NAME=${MODEL_NAME:-qwen-turbo}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - HIL_ENABLED=${HIL_ENABLED:-true}
-      - HIL_CONFIDENCE_THRESHOLD=${HIL_CONFIDENCE_THRESHOLD:-0.6}
       - API_KEY=${API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:

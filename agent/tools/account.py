@@ -9,7 +9,7 @@ def lookup_account(user_id: str) -> str:
     当用户询问自己的账号状态、是否被封禁、充值记录时调用此工具。
 
     Args:
-        user_id: 玩家 UID（游戏内用户ID）
+        user_id: 玩家 UID（用户提供的数字即为UID，如\"221\"、\"id12345\"）
     """
     # 根据 user_id 末尾数字决定状态，让演示更真实
     try:

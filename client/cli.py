@@ -40,17 +40,18 @@ class GameSupportCLI:
         self.session_id: Optional[str] = None
         self.client = httpx.AsyncClient(timeout=30.0)
     
-    async def chat(self, message: str, session_id: Optional[str] = None):
+    async def chat(self, message: str, session_id: Optional[str] = None, user_id: str = "cli_user"):
         """发送对话消息"""
         sid = session_id or self.session_id or f"cli_{id(message)}"
-        
-        console.print(f"[dim]发送消息到会话 {sid}...[/dim]")
-        
+
+        console.print(f"[dim]发送消息到会话 {sid} (UID: {user_id})...[/dim]")
+
         try:
             response = await self.client.post(
                 f"{self.api_url}/chat/send",
                 json={
                     "session_id": sid,
+                    "user_id": user_id,
                     "message": message
                 }
             )
@@ -76,7 +77,7 @@ class GameSupportCLI:
             # 显示元数据
             metadata = data.get("metadata", {})
             if metadata:
-                console.print(f"[dim]置信度: {metadata.get('confidence', 'N/A')} | 耗时: {metadata.get('execution_time_ms', 'N/A')}ms[/dim]")
+                console.print(f"[dim]耗时: {metadata.get('execution_time_ms', 'N/A')}ms[/dim]")
                 
         except httpx.HTTPError as e:
             console.print(f"[red]请求失败: {e}[/red]")
@@ -226,6 +227,11 @@ def main():
         help="指定会话ID"
     )
     parser.add_argument(
+        "--user-id",
+        default="cli_user",
+        help="玩家游戏UID (默认: cli_user)"
+    )
+    parser.add_argument(
         "message",
         nargs="?",
         help="发送的消息（非交互模式）"
@@ -238,7 +244,7 @@ def main():
     try:
         if args.message:
             # 非交互模式：发送单条消息
-            asyncio.run(cli.chat(args.message, args.session))
+            asyncio.run(cli.chat(args.message, args.session, args.user_id))
         else:
             # 交互模式
             asyncio.run(cli.interactive())

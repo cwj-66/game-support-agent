@@ -17,8 +17,14 @@ class ChatRequest(BaseModel):
         context: 可选的上下文信息
     """
     session_id: str = Field(
-        ..., 
+        ...,
         description="会话ID，用于关联同一用户的多次对话",
+        min_length=1,
+        max_length=64
+    )
+    user_id: str = Field(
+        ...,
+        description="玩家游戏UID",
         min_length=1,
         max_length=64
     )
@@ -62,7 +68,7 @@ class ChatResponse(BaseModel):
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
-        description="额外元数据，如执行时间、置信度等"
+        description="额外元数据，如执行时间等"
     )
 
 

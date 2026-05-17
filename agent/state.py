@@ -22,14 +22,12 @@ class InterruptInfo(TypedDict, total=False):
     """
     # 是否触发中断
     should_interrupt: bool
-    # 中断原因，例如 '检测到敏感词: 退款' 或 '置信度 0.45 低于阈值 0.6'
+    # 中断原因，例如 '检测到敏感词: 私下转账'
     reason: str
     # 风险等级: low / medium / high
     level: str
     # 检测到的敏感词列表，没有则为空
     sensitive_words: List[str]
-    # 触发中断时的置信度分数（0-1），未评估时为 None
-    confidence: Optional[float]
     # 待审核的原始内容，审核员看到的就是这个
     pending_content: Optional[str]
     # 中断来源: llm_escalate（LLM主动升等）/ auto_escalate（系统兜底）/ detector（安全检测）
@@ -77,6 +75,8 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     # 本轮用户原始问题，整个执行过程中不变
     user_query: str
+    # 玩家游戏UID，由API层传入，整个执行过程中不变
+    user_id: str
     # 会话唯一标识，也是 checkpointer 的 thread_id
     session_id: str
     # 中断触发信息，由 tool_exec（escalate）或 detector_node（安全兜底）设置
@@ -93,20 +93,22 @@ class AgentState(TypedDict):
     metadata: Dict[str, Any]
 
 # 创建对话初始状态
-def create_initial_state(session_id: str, user_query: str) -> AgentState:
+def create_initial_state(session_id: str, user_id: str, user_query: str) -> AgentState:
     """
     创建初始状态
-    
+
     Args:
         session_id: 会话ID
+        user_id: 玩家游戏UID
         user_query: 用户初始问题
-        
+
     Returns:
         初始化的AgentState
     """
     return {
         "messages": [],
         "user_query": user_query,
+        "user_id": user_id,
         "session_id": session_id,
         "interrupt_info": None,
         "human_review": None,

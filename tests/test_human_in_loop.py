@@ -1,6 +1,6 @@
 """
 Human-in-loop 重点测试
-测试三种中断场景：敏感词触发、置信度触发、审核操作
+测试三种中断场景：敏感词触发、工具失败触发、审核操作
 """
 
 import pytest
@@ -24,64 +24,59 @@ from human_in_loop.auditor import AuditLogger
 class TestInterruptDetector:
     """
     中断检测器测试
-    测试敏感词匹配和置信度双重过滤
+    测试敏感词匹配和工具失败检测
     """
     
     def test_sensitive_word_detection(self):
         """测试敏感词检测"""
         detector = InterruptDetector(
             sensitive_words=["封号", "退款", "投诉"],
-            confidence_threshold=0.6
         )
-        
-        # 包含敏感词的内容
-        decision = detector.detect("我要投诉你们封号我的账号", confidence=0.9)
+
+        decision = detector.detect("我要投诉你们封号我的账号")
         
         assert decision.should_interrupt is True
         assert "投诉" in decision.sensitive_words
         assert "封号" in decision.sensitive_words
         assert decision.level == "high"
     
-    def test_confidence_threshold_trigger(self):
-        """测试置信度阈值触发"""
-        detector = InterruptDetector(confidence_threshold=0.7)
-        
-        # 低置信度触发
-        decision = detector.detect("正常回复内容", confidence=0.3)
-        
+    def test_tool_failure_detection(self):
+        """测试工具失败检测"""
+        detector = InterruptDetector()
+
+        decision = detector.detect("正常回复内容", metadata={
+            "tool_calls": [{"status": "failed", "error": "连接超时"}]
+        })
+
         assert decision.should_interrupt is True
-        assert decision.confidence == 0.3
         assert decision.level == "medium"
-        assert "置信度" in decision.reason
-    
+        assert "工具调用失败" in decision.reason
+
     def test_no_trigger(self):
         """测试不触发中断"""
         detector = InterruptDetector(
             sensitive_words=["封号"],
-            confidence_threshold=0.5
         )
-        
-        # 无敏感词且置信度正常
-        decision = detector.detect("如何获得原石？", confidence=0.8)
+
+        decision = detector.detect("如何获得原石？")
         
         assert decision.should_interrupt is False
         assert decision.level == "low"
     
-    def test_both_triggers(self):
-        """测试同时触发敏感词和置信度"""
+    def test_sensitive_and_tool_failure(self):
+        """测试同时触发敏感词和工具失败"""
         detector = InterruptDetector(
             sensitive_words=["投诉"],
-            confidence_threshold=0.6
         )
-        
-        # 同时满足两个条件
-        decision = detector.detect("我要投诉，这是敏感问题", confidence=0.4)
-        
+
+        decision = detector.detect("我要投诉，这是敏感问题", metadata={
+            "tool_calls": [{"status": "failed", "error": "超时"}]
+        })
+
         assert decision.should_interrupt is True
-        # 敏感词优先级更高
         assert decision.level == "high"
         assert "投诉" in decision.reason
-        assert "置信度" in decision.reason
+        assert "工具调用失败" in decision.reason
     
     def test_update_sensitive_words(self):
         """测试更新敏感词列表"""
@@ -89,7 +84,7 @@ class TestInterruptDetector:
         
         detector.update_sensitive_words(["新词1", "新词2"])
         
-        decision = detector.detect("包含新词1的内容", confidence=1.0)
+        decision = detector.detect("包含新词1的内容")
         assert decision.should_interrupt is True
         assert "新词1" in decision.sensitive_words
     
@@ -100,7 +95,7 @@ class TestInterruptDetector:
             case_sensitive=False
         )
         
-        decision = detector.detect("我要申请REFUND", confidence=1.0)
+        decision = detector.detect("我要申请REFUND")
         # 不区分大小写，但此处是中文，测试逻辑
         # 实际应该测试英文敏感词
 
@@ -327,34 +322,30 @@ class TestInterruptScenarios:
         # 用户询问退款
         decision = detector.detect(
             content="我想申请退款，充错金额了",
-            confidence=0.8  # 即使高置信度也触发
         )
         
         assert decision.should_interrupt is True
         assert "退款" in decision.sensitive_words
         assert decision.level == "high"
     
-    def test_low_confidence_scenario(self):
-        """测试低置信度场景"""
-        detector = InterruptDetector(confidence_threshold=0.7)
-        
-        # Agent对复杂问题不确定
+    def test_tool_failure_scenario(self):
+        """测试工具失败场景"""
+        detector = InterruptDetector()
+
         decision = detector.detect(
-            content="这个...可能...我不太确定...",
-            confidence=0.3  # 低置信度
+            content="查询结果为空",
+            metadata={"tool_calls": [{"status": "failed", "error": "服务不可用"}]}
         )
-        
+
         assert decision.should_interrupt is True
-        assert "置信度" in decision.reason
-    
+        assert "工具调用失败" in decision.reason
+
     def test_complain_scenario(self):
         """测试投诉场景"""
         detector = InterruptDetector()
-        
-        # 用户投诉
+
         decision = detector.detect(
             content="我要投诉你们胡乱封号！",
-            confidence=0.9
         )
         
         assert decision.should_interrupt is True
@@ -370,7 +361,7 @@ class TestInterruptScenarios:
             
             # 1. 触发中断
             detector = InterruptDetector()
-            decision = detector.detect("我要投诉", confidence=0.5)
+            decision = detector.detect("我要投诉")
             assert decision.should_interrupt is True
             
             # 2. 创建审核上下文

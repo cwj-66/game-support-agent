@@ -105,6 +105,7 @@ graph = workflow.compile(checkpointer=get_checkpointer())
 
 async def run_agent(
     session_id: str,
+    user_id: str,
     user_query: str,
     thread_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -113,13 +114,14 @@ async def run_agent(
 
     Args:
         session_id: 会话ID
+        user_id: 玩家游戏UID
         user_query: 用户问题
         thread_id: 可选的线程ID（用于断点恢复）
 
     Returns:
         最终执行结果
     """
-    initial_state = create_initial_state(session_id, user_query)
+    initial_state = create_initial_state(session_id, user_id, user_query)
 
     config = {
         "configurable": {
@@ -159,6 +161,7 @@ async def run_agent(
 
 async def stream_agent(
     session_id: str,
+    user_id: str,
     user_query: str,
     thread_id: Optional[str] = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -168,7 +171,7 @@ async def stream_agent(
     每个 chunk 格式：{"node_name": {state_updates}}
     供 SSE 接口逐步推送给前端
     """
-    initial_state = create_initial_state(session_id, user_query)
+    initial_state = create_initial_state(session_id, user_id, user_query)
 
     config = {
         "configurable": {

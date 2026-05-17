@@ -99,8 +99,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                         "reason": f"账号 {data.get('uid', '未知')} 处于封禁状态：{data.get('ban_reason', '未知原因')}",
                         "level": "high",
                         "sensitive_words": [],
-                        "confidence": None,
-                        "pending_content": None,
+"pending_content": None,
                         "source": "auto_escalate",
                     }
 
@@ -115,7 +114,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                     "reason": data.get("reason", "LLM主动请求人工介入"),
                     "level": data.get("level", "high"),
                     "sensitive_words": [],
-                    "confidence": None,
                     "pending_content": None,
                     "source": "llm_escalate",
                 }
@@ -151,7 +149,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                     "reason": decision.reason,
                     "level": decision.level,
                     "sensitive_words": [],
-                    "confidence": None,
                     "pending_content": None,
                     "source": "auto_escalate",
                 }
