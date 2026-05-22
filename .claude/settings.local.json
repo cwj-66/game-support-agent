@@ -22,7 +22,9 @@
       "Bash(cmd *)",
       "Bash(powershell *)",
       "Bash(D:\\\\miniconda3\\\\python.exe *)",
-      "Bash(D:/miniconda3/python.exe *)"
+      "Bash(D:/miniconda3/python.exe *)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)"
     ]
   }
 }

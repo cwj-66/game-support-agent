@@ -1,0 +1,17 @@
+{
+  "audit_id": "audit_0de2026904b6",
+  "session_id": "test_003",
+  "user_query": "我要投诉封号",
+  "agent_raw_response": "关于封号问题...",
+  "interrupt_triggered": true,
+  "interrupt_reason": "检测到敏感词: 投诉",
+  "interrupt_level": "high",
+  "review_action": "APPROVE",
+  "reviewer_id": "admin_001",
+  "review_timestamp": "2026-05-17T08:32:23.446659",
+  "was_modified": false,
+  "final_response": "关于封号问题...",
+  "created_at": "2026-05-17T08:32:23.446721",
+  "completed_at": "2026-05-17T08:32:23.446730",
+  "metadata": {}
+}

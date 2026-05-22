@@ -118,6 +118,22 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                     "source": "llm_escalate",
                 }
 
+            # 通用检查：工具通过 _health.needs_escalation 主动要求升等
+            if interrupt_info is None:
+                try:
+                    health = json.loads(result_str).get("_health", {})
+                except (json.JSONDecodeError, ValueError):
+                    health = {}
+                if health.get("needs_escalation"):
+                    interrupt_info = {
+                        "should_interrupt": True,
+                        "reason": health.get("message", "工具执行结果需要人工介入"),
+                        "level": "medium",
+                        "sensitive_words": [],
+                        "pending_content": None,
+                        "source": "auto_escalate",
+                    }
+
             tool_messages.append(ToolMessage(
                 content=result_str,
                 name=tool_name,

@@ -21,6 +21,9 @@ class KnowledgeQueryInput(BaseModel):
     )
 
 
+RAG_CONFIDENCE_THRESHOLD = 0.5
+
+
 def _fallback(message: str) -> str:
     """返回统一的降级 JSON，避免 LangGraph 崩溃"""
     return json.dumps(
@@ -28,24 +31,42 @@ def _fallback(message: str) -> str:
             "has_answer": False,
             "message": message,
             "confidence": 0.0,
-            "_health": {"ok": False, "confidence": 0.0, "message": message},
+            "_health": {
+                "ok": False,
+                "confidence": 0.0,
+                "needs_escalation": True,
+                "message": message,
+            },
         },
         ensure_ascii=False,
     )
 
 
 def _inject_health(json_str: str) -> str:
-    """向工具返回的 JSON 注入 _health 字段，供升等检测器通用判断"""
+    """向工具返回的 JSON 注入 _health 字段，供升等检测器和 tool_exec 通用判断"""
     try:
         data = json.loads(json_str)
     except (json.JSONDecodeError, ValueError):
         return json_str
     has_answer = data.get("has_answer", True)
     confidence = data.get("confidence")
+    needs_escalation = (
+        not has_answer
+        or (confidence is not None and confidence < RAG_CONFIDENCE_THRESHOLD)
+    )
     data["_health"] = {
-        "ok": has_answer,
+        "ok": not needs_escalation,
         "confidence": confidence,
-        "message": None if has_answer else "知识库未找到相关答案",
+        "needs_escalation": needs_escalation,
+        "message": (
+            None
+            if not needs_escalation
+            else (
+                "知识库未找到相关答案"
+                if not has_answer
+                else f"知识库检索置信度过低（{confidence:.2f} < {RAG_CONFIDENCE_THRESHOLD}）"
+            )
+        ),
     }
     return json.dumps(data, ensure_ascii=False)
 
