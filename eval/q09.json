@@ -1,0 +1,14 @@
+[
+  {
+    "id": "q09",
+    "category": "account",
+    "question": "I bought a Genshin starter account and it got banned. Can it be unbanned?",
+    "ground_truth": "No. The official team strictly combats accounts mass-registered via scripts ('starter accounts'). Purchasing such accounts carries extremely high security risks. Bans resulting from mass-produced accounts by workshops will not be lifted. Players should never purchase any form of account.",
+    "keywords": [
+      "初始号",
+      "封禁",
+      "工作室",
+      "购买"
+    ]
+  }
+]

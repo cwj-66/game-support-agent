@@ -65,6 +65,12 @@ class Settings(BaseSettings):
         description="LLM API基础URL（用于兼容第三方API）"
     )
     
+    # LLM 思考模式配置
+    ENABLE_THINKING: bool = Field(
+        default=False,
+        description="是否启用思考模式（True=推理更深但更慢，False=快速响应）",
+    )
+
     # Human-in-loop配置
     HIL_ENABLED: bool = Field(
         default=True,

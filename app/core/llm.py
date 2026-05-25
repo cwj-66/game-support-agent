@@ -20,12 +20,18 @@ def get_chat_model() -> ChatOpenAI:
     provider = get_llm_provider(settings)
 
     if provider == "dashscope":
+        extra_body = (
+            {"thinking": {"type": "disabled"}}
+            if not settings.ENABLE_THINKING
+            else None
+        )
         return ChatOpenAI(
             model=settings.MODEL_NAME or "qwen-turbo",
             api_key=settings.DASHSCOPE_API_KEY,
             base_url=settings.LLM_BASE_URL
             or "https://dashscope.aliyuncs.com/compatible-mode/v1",
             temperature=0.2,
+            extra_body=extra_body,
         )
 
     return ChatOpenAI(

@@ -27,11 +27,17 @@ def _build_llm_from_settings() -> ChatOpenAI:
     base_url = settings.LLM_BASE_URL or "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     if settings.DASHSCOPE_API_KEY:
+        extra_body = (
+            {"thinking": {"type": "disabled"}}
+            if not settings.ENABLE_THINKING
+            else None
+        )
         return ChatOpenAI(
             api_key=settings.DASHSCOPE_API_KEY,
             model=model_name,
             base_url=base_url,
             temperature=0.2,
+            extra_body=extra_body,
         )
 
     if settings.OPENAI_API_KEY:

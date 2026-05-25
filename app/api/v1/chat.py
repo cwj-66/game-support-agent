@@ -35,6 +35,33 @@ except ImportError:
 router = APIRouter(prefix="/chat", tags=["对话"])
 
 
+def _get_interrupt_response(interrupt_payload: dict) -> str:
+    """根据中断来源生成合适的用户提示，避免对所有中断都说"敏感操作" """
+    source = interrupt_payload.get("source", "")
+    level = interrupt_payload.get("interrupt_level", "")
+    reason = interrupt_payload.get("interrupt_reason", "")
+
+    # 敏感词检测 high 级别 → 保留安全提示
+    if source == "detector" and level == "high":
+        return "您的消息涉及敏感操作，已转交人工客服处理，请稍候。"
+
+    # LLM 主动升等 → 用升等原因生成友好提示
+    if source == "llm_escalate":
+        if "知识库" in reason or "无结果" in reason or "找不到" in reason:
+            return "抱歉，我暂时没有找到相关信息，已为您转接人工客服协助处理，请稍候。"
+        return "正在为您转接人工客服处理，请稍候。"
+
+    # 自动升等（工具失败/账号封禁等）
+    if source == "auto_escalate":
+        return "正在为您转接人工客服处理，请稍候。"
+
+    # 检测器低置信度
+    if source == "detector":
+        return "抱歉，我暂时无法确认这个问题的答案，已为您转接人工客服协助处理，请稍候。"
+
+    return "正在为您转接人工客服，请稍候。"
+
+
 def _node_to_progress(node_name: str) -> str:
     """将节点名称映射为用户友好的进度描述"""
     mapping = {
@@ -85,7 +112,7 @@ async def send_message(
             add_pending(request.session_id, interrupt_payload)
             return ChatResponse(
                 session_id=request.session_id,
-                response="您的消息涉及敏感操作，已转交人工客服处理，请稍候。",
+                response=_get_interrupt_response(interrupt_payload),
                 requires_review=True,
                 review_id=request.session_id,
                 metadata={"execution_time_ms": execution_time_ms},
@@ -113,7 +140,7 @@ async def send_message(
             add_pending(request.session_id, interrupt_payload)
             return ChatResponse(
                 session_id=request.session_id,
-                response="您的消息涉及敏感操作，已转交人工客服处理，请稍候。",
+                response=_get_interrupt_response(interrupt_payload),
                 requires_review=True,
                 review_id=request.session_id,
                 metadata={"execution_time_ms": execution_time_ms},

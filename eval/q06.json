@@ -1,0 +1,14 @@
+[
+  {
+    "id": "q06",
+    "category": "account",
+    "question": "My Genshin Impact account was hacked and my Primogems were spent. Can support restore them?",
+    "ground_truth": "No. Due to the irreversibility of in-game data operations, official support cannot provide rollback or compensation for virtual property losses (such as spent Primogems or destroyed weapons) during the period the account was compromised.",
+    "keywords": [
+      "被盗",
+      "原石",
+      "不可逆",
+      "补偿"
+    ]
+  }
+]

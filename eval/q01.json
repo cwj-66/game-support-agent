@@ -1,0 +1,22 @@
+[
+  {
+    "id": "q01",
+    "category": "escalate",
+    "question": "无相之雷的「石头剪刀布」攻击，实际出手顺序是什么？",
+    "ground_truth": "Agent 尝试调用 query_knowledge 检索知识库，但知识库为英文资料，BGE-M3 无法将中文「无相之雷」映射到英文「Electro Hypostasis」，检索返回无关内容。Agent 应承认无法回答，confidence < 0.5 触发 InterruptDetector，转人工处理。",
+    "expected_action": {
+      "primary": "query_knowledge",
+      "secondary": "escalate_to_human",
+      "reason": "知识库检索无结果，confidence 低于 0.5，InterruptDetector 触发安全兜底转人工。",
+      "triggers": [
+        "retrieval_failure",
+        "low_confidence"
+      ]
+    },
+    "keywords": [
+      "Electro Hypostasis",
+      "rock-paper-scissors",
+      "无相之雷"
+    ]
+  }
+]

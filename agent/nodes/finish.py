@@ -28,8 +28,8 @@ async def finish_node(state: AgentState) -> Dict[str, Any]:
     if user_query and final_response:
         llm = get_chat_model()
         result = await llm.ainvoke([
-            SystemMessage(content="你是一个对话摘要助手。请用一句话总结以下对话的核心内容，不超过50字。只输出摘要本身，不要加任何前缀。"),
-            HumanMessage(content=f"用户问题：{user_query}\nAgent回复：{final_response}"),
+            SystemMessage(content="你是一个对话摘要助手。请用一句话总结：用户问了什么问题、客服给出了什么解决方案。不超过50字。只输出摘要，不加任何前缀。格式参考：\"用户询问XX，客服通过XX解决了问题。\""),
+            HumanMessage(content=f"用户问题：{user_query}\n客服回复：{final_response}"),
         ])
         new_summary = result.content.strip()
 
