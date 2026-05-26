@@ -19,6 +19,14 @@ class TicketCreate(BaseModel):
     priority: TicketPriority = Field(default="medium", description="优先级")
 
 
+class TicketUpdate(BaseModel):
+    """更新工单请求（客服手动处理工单时使用）"""
+    status: Optional[TicketStatus] = Field(default=None, description="工单状态")
+    agent_reply: Optional[str] = Field(default=None, max_length=2000, description="客服处理结果/回复")
+    category: Optional[TicketCategory] = Field(default=None, description="分类")
+    reviewer_id: Optional[str] = Field(default=None, description="处理人ID")
+
+
 class Ticket(BaseModel):
     """工单完整模型"""
     ticket_id: str = Field(..., description="工单号")

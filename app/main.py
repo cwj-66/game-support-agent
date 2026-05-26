@@ -24,7 +24,8 @@ from app.core.exceptions import (
     app_exception_handler,
     generic_exception_handler
 )
-from app.api.v1 import chat, human
+from app.api.v1 import chat, human, ticket
+from agent.tools.mcp_client import init_mcp_client, close_mcp_client
 
 
 @asynccontextmanager
@@ -49,15 +50,34 @@ async def lifespan(app: FastAPI):
     if settings.LANGCHAIN_TRACING_V2 and settings.LANGCHAIN_API_KEY:
         print(f"[STARTUP] LangSmith tracing enabled (project: {settings.LANGCHAIN_PROJECT})")
 
+    # 初始化 MCP 客户端（连接 Server + 工具发现）
+    try:
+        mcp_tools = await init_mcp_client(settings.MCP_SERVER_URL + "/sse")
+        print(f"[STARTUP] MCP client connected, discovered {len(mcp_tools)} tool(s)")
+        for t in mcp_tools:
+            print(f"         - {t.name}")
+    except Exception as e:
+        print(f"[STARTUP] MCP client init skipped: {e}")
+        print("[STARTUP] Local mock tools will be used as fallback")
+
+    # 初始化 SQLite 数据库（工单表）
+    try:
+        from app.core.database import init_db
+        init_db()
+        print(f"[STARTUP] SQLite database initialized")
+    except Exception as e:
+        print(f"[STARTUP] SQLite init failed: {e}")
+
     # TODO: 检查RAG服务健康状态
     # TODO: 加载敏感词库
-    
+
     yield
-    
+
     # 关闭逻辑
     print("[SHUTDOWN] Application stopped")
-    
-    # TODO: 清理其他资源
+
+    # 清理 MCP 连接
+    await close_mcp_client()
 
 
 def create_application() -> FastAPI:
@@ -89,7 +109,7 @@ def create_application() -> FastAPI:
     # 注册异常处理器
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
-    
+
     # 注册API路由
     app.include_router(
         chat.router,
@@ -101,7 +121,12 @@ def create_application() -> FastAPI:
         prefix=f"{settings.API_V1_PREFIX}",
         tags=["人工审核"]
     )
-    
+    app.include_router(
+        ticket.router,
+        prefix=f"{settings.API_V1_PREFIX}",
+        tags=["工单"]
+    )
+
     return app
 
 

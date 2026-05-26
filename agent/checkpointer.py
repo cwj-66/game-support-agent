@@ -1,60 +1,74 @@
 """
 LangGraph 状态持久化配置
-使用 MemorySaver 作为开发/测试环境的checkpointer
+使用 SqliteSaver 持久化 Agent 状态到 SQLite 文件
+与工单数据库共用同一个 SQLite 文件
+
 生产环境可替换为 RedisSaver 或 PostgresSaver
 """
 
-from langgraph.checkpoint.memory import MemorySaver
+import sqlite3
+import os
 from typing import Optional
 
-
-# 全局checkpointer实例
-_checkpoint_saver: Optional[MemorySaver] = None
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 
-def get_checkpointer() -> MemorySaver:
+# 数据库文件路径（与 app.core.database 共享）
+# 默认在项目 data 目录下
+_DB_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data",
+    "game_support.db",
+)
+
+
+def _get_db_path() -> str:
+    """获取数据库文件路径，优先从配置读取"""
+    try:
+        from app.core.config import get_settings
+
+        return get_settings().DB_PATH
+    except Exception:
+        return _DB_PATH
+
+
+# 全局 checkpointer 实例
+_checkpoint_saver: Optional[SqliteSaver] = None
+_connection: Optional[sqlite3.Connection] = None
+
+
+def get_checkpointer() -> SqliteSaver:
     """
-    获取或创建 MemorySaver 实例
-    
-    MemorySaver将Agent状态保存在内存中，支持：
-    1. 断点恢复：从任意节点重新开始
+    获取或创建 SqliteSaver 实例
+
+    SqliteSaver 将 Agent 状态持久化到 SQLite 文件，支持：
+    1. 断点恢复：服务重启后仍可恢复中断的会话
     2. 状态回滚：查看历史状态
-    3. 并发隔离：不同session_id互不干扰
-    
-    TODO: 生产环境替换为持久化存储
+    3. 并发隔离：不同 session_id 互不干扰
     """
-    global _checkpoint_saver
+    global _checkpoint_saver, _connection
+
     if _checkpoint_saver is None:
-        _checkpoint_saver = MemorySaver()
+        db_path = _get_db_path()
+
+        # 确保 data 目录存在
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+        _connection = sqlite3.connect(db_path, check_same_thread=False)
+        _checkpoint_saver = SqliteSaver(_connection)
+
     return _checkpoint_saver
 
 
 def reset_checkpointer():
     """
-    重置checkpointer（主要用于测试）
-    
-    警告：这会清除所有存储的状态！
+    重置 checkpointer（主要用于测试）
+
+    警告：这会清除所有持久化状态！
     """
-    global _checkpoint_saver
+    global _checkpoint_saver, _connection
+
+    if _connection:
+        _connection.close()
+        _connection = None
     _checkpoint_saver = None
-
-
-# TODO: Redis持久化实现（生产环境）
-# class RedisCheckpointSaver(BaseCheckpointSaver):
-#     """基于Redis的状态持久化"""
-#     def __init__(self, redis_url: str):
-#         self.redis = redis.from_url(redis_url)
-#     
-#     async def aget(self, config: RunnableConfig) -> Optional[Checkpoint]:
-#         # 从Redis读取状态
-#         pass
-#     
-#     async def aput(self, config: RunnableConfig, checkpoint: Checkpoint) -> None:
-#         # 写入Redis
-#         pass
-
-
-# TODO: Postgres持久化实现
-# class PostgresCheckpointSaver(BaseCheckpointSaver):
-#     """基于PostgreSQL的状态持久化，支持复杂查询"""
-#     pass

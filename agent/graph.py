@@ -108,6 +108,7 @@ async def run_agent(
     user_id: str,
     user_query: str,
     thread_id: Optional[str] = None,
+    ticket_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     运行 Agent 主入口
@@ -117,11 +118,12 @@ async def run_agent(
         user_id: 玩家游戏UID
         user_query: 用户问题
         thread_id: 可选的线程ID（用于断点恢复）
+        ticket_id: 关联的工单ID（可选）
 
     Returns:
         最终执行结果
     """
-    initial_state = create_initial_state(session_id, user_id, user_query)
+    initial_state = create_initial_state(session_id, user_id, user_query, ticket_id=ticket_id)
 
     config = {
         "configurable": {
@@ -164,6 +166,7 @@ async def stream_agent(
     user_id: str,
     user_query: str,
     thread_id: Optional[str] = None,
+    ticket_id: Optional[str] = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
     流式运行 Agent，逐节点产出状态更新
@@ -171,7 +174,7 @@ async def stream_agent(
     每个 chunk 格式：{"node_name": {state_updates}}
     供 SSE 接口逐步推送给前端
     """
-    initial_state = create_initial_state(session_id, user_id, user_query)
+    initial_state = create_initial_state(session_id, user_id, user_query, ticket_id=ticket_id)
 
     config = {
         "configurable": {

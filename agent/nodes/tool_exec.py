@@ -42,6 +42,8 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     tool_call_records: List[Dict[str, Any]] = []
     metadata = state.get("metadata", {})
     interrupt_info = None
+    # 记录本次执行中是否有创建工单，供 state.ticket_id 更新
+    _new_ticket_id: str | None = None
 
     # 计算 ReAct 轮次
     prev_tool_calls = state.get("tool_calls", [])
@@ -102,6 +104,16 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
 "pending_content": None,
                         "source": "auto_escalate",
                     }
+
+            # create_ticket：提取工单号，供后续节点回写状态
+            if tool_name == "create_ticket":
+                try:
+                    data = json.loads(result_str)
+                    ticket_id_from_tool = data.get("ticket_id")
+                except (json.JSONDecodeError, ValueError):
+                    ticket_id_from_tool = None
+                if ticket_id_from_tool:
+                    _new_ticket_id = ticket_id_from_tool
 
             # escalate_to_human：LLM 主动升等，直接设 interrupt_info
             if tool_name == "escalate_to_human":
@@ -174,6 +186,8 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
         "tool_calls": state.get("tool_calls", []) + tool_call_records,
         "metadata": metadata,
     }
+    if _new_ticket_id is not None:
+        result["ticket_id"] = _new_ticket_id
     if interrupt_info is not None:
         result["interrupt_info"] = interrupt_info
     return result

@@ -11,9 +11,18 @@ from contextlib import contextmanager
 
 from app.models.ticket import Ticket, TicketStats
 
-# 数据库文件路径
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "tickets.db")
-DB_PATH = os.path.abspath(DB_PATH)
+# 数据库文件路径，优先从 Settings 读取
+def _resolve_db_path() -> str:
+    try:
+        from app.core.config import get_settings
+        return get_settings().DB_PATH
+    except Exception:
+        return os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "data", "game_support.db")
+        )
+
+
+DB_PATH = _resolve_db_path()
 
 
 def _ensure_data_dir():

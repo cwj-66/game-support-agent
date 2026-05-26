@@ -1,3 +1,8 @@
+"""
+工单创建工具
+使用 SQLite 持久化工单数据
+"""
+
 import json
 import time
 from langchain_core.tools import tool
@@ -20,14 +25,48 @@ def create_ticket(user_id: str, issue_type: str, description: str) -> str:
         issue_type: 问题类型，见上方枚举值
         description: 问题描述
     """
-    ticket_id = f"TK{int(time.time())}"
+    # 将 issue_type 映射为中文标题
+    title_map = {
+        "account_ban": "账号封禁申诉",
+        "payment": "充值/退款问题",
+        "bug": "游戏 Bug 反馈",
+        "other": "客服咨询",
+    }
+    title = title_map.get(issue_type, "客服工单")
 
-    estimated = {
+    # 优先级映射
+    priority_map = {
+        "account_ban": "high",
+        "payment": "high",
+        "bug": "medium",
+        "other": "medium",
+    }
+    priority = priority_map.get(issue_type, "medium")
+
+    # 预估处理时间
+    estimated_map = {
         "account_ban": "3-5 个工作日",
         "payment": "1-3 个工作日",
         "bug": "5-7 个工作日",
         "other": "3-5 个工作日",
-    }.get(issue_type, "3-5 个工作日")
+    }
+    estimated = estimated_map.get(issue_type, "3-5 个工作日")
+
+    # 写入 SQLite
+    try:
+        from app.core.database import create_ticket as db_create
+
+        ticket = db_create(
+            player_uid=user_id,
+            title=title,
+            description=description,
+            priority=priority,
+        )
+        ticket_id = ticket.ticket_id
+    except Exception as e:
+        # 数据库不可用时降级为内存生成
+        ticket_id = f"TK{int(time.time())}"
+        print(f"[ticket] DB unavailable, using fallback ID: {e}")
 
     result = {
         "_health": {"ok": True, "confidence": 0.95, "message": None},

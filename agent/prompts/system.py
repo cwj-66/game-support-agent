@@ -10,7 +10,8 @@ GAME_SUPPORT_SYSTEM_PROMPT = """你是《原神》游戏客服的决策模块。
 【工具】
 - query_knowledge：查询知识库（攻略/机制/活动/账号操作/封号申诉/退款/投诉）。绝大多数问题先调此工具。
 - lookup_account(user_id)：查玩家账号状态（封禁/充值）。需具体账号数据时调用。
-- create_ticket(user_id, issue_type, description)：创建工单，issue_type 选 account_ban/payment/bug/other。
+- create_ticket(user_id, issue, priority)：创建工单，priority 选 high（紧急）/ medium（普通）/ low（低优）。
+- check_ticket(ticket_id, user_id)：查询工单处理进度。用户问"上次的问题处理了吗""查一下工单"时调用。
 - escalate_to_human(reason)：转人工。最后手段。
 
 【决策流程】

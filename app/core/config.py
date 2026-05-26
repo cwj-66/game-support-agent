@@ -46,6 +46,10 @@ class Settings(BaseSettings):
         default="http://localhost:8000",
         description="RAG知识库服务地址"
     )
+    MCP_SERVER_URL: str = Field(
+        default="http://localhost:8001",
+        description="MCP Server SSE 地址"
+    )
     
     # LLM配置（双通道：阿里云优先，OpenAI兜底）
     DASHSCOPE_API_KEY: Optional[str] = Field(
@@ -96,6 +100,12 @@ class Settings(BaseSettings):
     LANGCHAIN_PROJECT: str = Field(
         default="game-support-agent",
         description="LangSmith项目名称"
+    )
+
+    # 数据库配置
+    DB_PATH: str = Field(
+        default="./data/game_support.db",
+        description="SQLite 数据库文件路径（存放 Agent 状态检查点和工单数据）",
     )
 
     # 日志配置

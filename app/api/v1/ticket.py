@@ -5,7 +5,7 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
-from app.models.ticket import TicketCreate, Ticket, TicketListResponse, TicketStats
+from app.models.ticket import TicketCreate, TicketUpdate, Ticket, TicketListResponse, TicketStats
 from app.core.database import create_ticket, get_ticket, list_tickets, update_ticket, get_ticket_stats
 
 router = APIRouter()
@@ -78,15 +78,6 @@ async def submit_ticket(body: TicketCreate):
     }
 
 
-@router.get("/ticket/{ticket_id}", response_model=Ticket, summary="查询工单详情")
-async def get_ticket_detail(ticket_id: str):
-    """根据工单号查询完整工单信息"""
-    ticket = get_ticket(ticket_id)
-    if ticket is None:
-        raise HTTPException(status_code=404, detail=f"工单 {ticket_id} 不存在")
-    return ticket
-
-
 @router.get("/ticket/list", response_model=TicketListResponse, summary="工单列表")
 async def list_all_tickets(
     status: Optional[str] = Query(default=None, description="按状态筛选"),
@@ -113,3 +104,31 @@ async def list_all_tickets(
 async def get_ticket_statistics():
     """获取工单统计数据"""
     return get_ticket_stats()
+
+
+@router.get("/ticket/{ticket_id}", response_model=Ticket, summary="查询工单详情")
+async def get_ticket_detail(ticket_id: str):
+    """根据工单号查询完整工单信息"""
+    ticket = get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail=f"工单 {ticket_id} 不存在")
+    return ticket
+
+
+@router.patch("/ticket/{ticket_id}", response_model=Ticket, summary="更新工单（客服处理）")
+async def update_ticket_detail(ticket_id: str, body: TicketUpdate):
+    """客服手动更新工单状态和处理结果"""
+    ticket = get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail=f"工单 {ticket_id} 不存在")
+
+    updated = update_ticket(
+        ticket_id,
+        status=body.status,
+        agent_reply=body.agent_reply,
+        category=body.category,
+        reviewer_id=body.reviewer_id,
+    )
+    if updated is None:
+        raise HTTPException(status_code=500, detail="更新工单失败")
+    return updated

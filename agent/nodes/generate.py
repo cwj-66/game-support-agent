@@ -49,6 +49,15 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
 
     metadata = state.get("metadata", {})
 
+    # 若有关联工单，回写 agent_reply（数据库不可用时静默跳过）
+    ticket_id = state.get("ticket_id")
+    if ticket_id:
+        try:
+            from app.core.database import update_ticket
+            update_ticket(ticket_id, agent_reply=final_response)
+        except Exception:
+            pass
+
     return {
         "messages": [ai_message],
         "final_response": final_response,

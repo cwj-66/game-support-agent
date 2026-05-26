@@ -87,13 +87,20 @@ class AgentState(TypedDict):
     tool_calls: List[Dict[str, Any]]
     # 最终回复，generate_response_node 生成，可能是 LLM 写的也可能是人工覆盖的
     final_response: Optional[str]
+    # 关联的工单 ID（可选），从 API 层传入
+    ticket_id: Optional[str]
     # 本轮对话的一句话摘要，finish_node 生成，下一轮作为上下文喂给 LLM
     session_summary: Optional[str]
     # 运行时元数据，各节点以读-改-写模式往里塞东西，同一个 key 后来者覆盖前者
     metadata: Dict[str, Any]
 
 # 创建对话初始状态
-def create_initial_state(session_id: str, user_id: str, user_query: str) -> AgentState:
+def create_initial_state(
+    session_id: str,
+    user_id: str,
+    user_query: str,
+    ticket_id: Optional[str] = None,
+) -> AgentState:
     """
     创建初始状态
 
@@ -101,6 +108,7 @@ def create_initial_state(session_id: str, user_id: str, user_query: str) -> Agen
         session_id: 会话ID
         user_id: 玩家游戏UID
         user_query: 用户初始问题
+        ticket_id: 关联的工单ID（可选）
 
     Returns:
         初始化的AgentState
@@ -110,6 +118,7 @@ def create_initial_state(session_id: str, user_id: str, user_query: str) -> Agen
         "user_query": user_query,
         "user_id": user_id,
         "session_id": session_id,
+        "ticket_id": ticket_id,
         "interrupt_info": None,
         "human_review": None,
         "tool_calls": [],

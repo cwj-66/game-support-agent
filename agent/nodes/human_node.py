@@ -104,6 +104,22 @@ async def human_node(state: AgentState) -> Dict[str, Any]:
         notes=notes,
     )
 
+    # ── 若有关联工单，回写审核结果 ────────────────────────────
+    ticket_id = state.get("ticket_id")
+    if ticket_id:
+        try:
+            from app.core.database import update_ticket
+            update_ticket(
+                ticket_id,
+                status="resolved",
+                human_reviewed=True,
+                human_action=action_str,
+                reviewer_id=reviewer_id,
+                interrupt_reason=interrupt_info.get("reason"),
+            )
+        except Exception:
+            pass
+
     # ── 打包 LangGraph 状态更新 ────────────────────────────────
     return {
         "human_review": human_result,
