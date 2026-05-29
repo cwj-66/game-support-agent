@@ -25,7 +25,7 @@ from app.models.review import (
     ReviewTask,
     ReviewHistoryResponse,
 )
-from agent.graph import graph
+from agent.graph import get_graph
 from agent.state import HumanReviewResult
 
 
@@ -113,7 +113,8 @@ async def submit_review(
     }
 
     # 恢复图执行，human_node 从 interrupt() 处继续运行
-    result = await graph.ainvoke(
+    g = await get_graph()
+    result = await g.ainvoke(
         Command(resume=resume_data),
         config=_graph_config(session_id),
     )

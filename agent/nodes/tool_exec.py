@@ -1,6 +1,11 @@
 """
 通用工具执行节点
 读取 AIMessage.tool_calls，动态分发并执行对应工具
+
+兜底策略（按优先级）：
+1. LLM 主动调用 escalate_to_human → 直接设 interrupt_info，路由到 human
+2. 轮次达上限 + 工具执行失败 → check_batch 返回 should_interrupt=True，路由到 human
+3. 轮次达上限无失败 → 自动建工单 + 设 metadata.react_timeout，reasoning 跳过 LLM 直接降级回复
 """
 
 import json
@@ -22,7 +27,9 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     1. 找到最后一条带 tool_calls 的 AIMessage
     2. 依次执行每个工具调用
     3. 若执行 escalate_to_human → 直接设 interrupt_info 升等
-    4. 所有工具执行完后，若轮次达上限 → 跑 check_batch() 兜底拉闸
+    4. 所有工具执行完后，若轮次达上限：
+       - 有工具失败 → 设 interrupt_info 升等转人工
+       - 无工具失败 → 自动建工单 + 设 metadata.react_timeout
     5. 将 ToolMessage 写回 messages
     """
     messages = state.get("messages", [])
@@ -89,22 +96,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                 except (json.JSONDecodeError, ValueError):
                     pass
 
-            # lookup_account 返回封号状态 → 自动升等，不依赖 LLM 判断
-            if tool_name == "lookup_account" and interrupt_info is None:
-                try:
-                    data = json.loads(result_str)
-                except (json.JSONDecodeError, ValueError):
-                    data = {}
-                if data.get("status") == "banned":
-                    interrupt_info = {
-                        "should_interrupt": True,
-                        "reason": f"账号 {data.get('uid', '未知')} 处于封禁状态：{data.get('ban_reason', '未知原因')}",
-                        "level": "high",
-                        "sensitive_words": [],
-"pending_content": None,
-                        "source": "auto_escalate",
-                    }
-
             # create_ticket：提取工单号，供后续节点回写状态
             if tool_name == "create_ticket":
                 try:
@@ -130,22 +121,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                     "source": "llm_escalate",
                 }
 
-            # 通用检查：工具通过 _health.needs_escalation 主动要求升等
-            if interrupt_info is None:
-                try:
-                    health = json.loads(result_str).get("_health", {})
-                except (json.JSONDecodeError, ValueError):
-                    health = {}
-                if health.get("needs_escalation"):
-                    interrupt_info = {
-                        "should_interrupt": True,
-                        "reason": health.get("message", "工具执行结果需要人工介入"),
-                        "level": "medium",
-                        "sensitive_words": [],
-                        "pending_content": None,
-                        "source": "auto_escalate",
-                    }
-
             tool_messages.append(ToolMessage(
                 content=result_str,
                 name=tool_name,
@@ -166,12 +141,13 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
 
         tool_call_records.append(record)
 
-    # LLM 没有主动升等，但轮次达到上限 → 系统兜底拉闸
+    # 轮次达到上限 → 系统兜底检测
     if interrupt_info is None:
         detector = get_default_escalate_detector()
         if react_round >= detector.max_react_rounds:
             decision = detector.check_batch(tool_call_records, react_round)
             if decision.should_interrupt:
+                # 超限 + 工具失败 → 升等转人工
                 interrupt_info = {
                     "should_interrupt": True,
                     "reason": decision.reason,
@@ -180,6 +156,28 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                     "pending_content": None,
                     "source": "auto_escalate",
                 }
+            elif "react_timeout" not in metadata:
+                # 仅超限无失败 → 自动建工单 + 优雅降级（仅首次，防重复）
+                try:
+                    from app.core.database import create_ticket as db_create
+                    ticket = db_create(
+                        player_uid=state.get("user_id", "unknown"),
+                        title="ReAct 超限自动工单",
+                        description=f"Agent 多次尝试后仍无法回答用户问题。原因：{decision.reason}",
+                        priority="P2",
+                        session_id=state.get("session_id"),
+                    )
+                    _new_ticket_id = ticket.ticket_id
+                    metadata["react_timeout"] = {
+                        "ticket_id": ticket.ticket_id,
+                        "reason": decision.reason,
+                    }
+                except Exception:
+                    # 数据库不可用时静默跳过
+                    metadata["react_timeout"] = {
+                        "ticket_id": None,
+                        "reason": decision.reason,
+                    }
 
     result: Dict[str, Any] = {
         "messages": tool_messages,

@@ -43,9 +43,10 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """
     对话响应模型
-    
+
     Attributes:
         session_id: 会话ID
+        status: 响应状态 ok / under_review
         response: Agent回复内容
         requires_review: 是否需要人工审核
         review_id: 审核任务ID（如果需要审核）
@@ -53,6 +54,7 @@ class ChatResponse(BaseModel):
         metadata: 额外元数据
     """
     session_id: str = Field(..., description="会话ID")
+    status: str = Field(default="ok", description="响应状态: ok 正常 / under_review 审核中")
     response: str = Field(..., description="Agent回复内容")
     requires_review: bool = Field(
         default=False,

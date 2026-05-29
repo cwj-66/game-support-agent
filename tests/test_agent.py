@@ -61,12 +61,13 @@ class TestAgentState:
 class TestCheckpointer:
     """Checkpointer测试"""
 
-    def test_get_checkpointer_singleton(self):
+    @pytest.mark.asyncio
+    async def test_get_checkpointer_singleton(self):
         """测试checkpointer单例"""
-        reset_checkpointer()
+        await reset_checkpointer()
 
-        cp1 = get_checkpointer()
-        cp2 = get_checkpointer()
+        cp1 = await get_checkpointer()
+        cp2 = await get_checkpointer()
 
         assert cp1 is cp2
         assert cp1 is not None
@@ -199,13 +200,15 @@ class TestAgentIntegration:
         from agent.graph import run_agent
 
         # Mock所有依赖
-        with patch("agent.graph.graph") as mock_graph:
-            mock_result = {
-                "final_response": "这是回复内容",
-                "messages": [],
-                "metadata": {"completed": True}
-            }
+        mock_result = {
+            "final_response": "这是回复内容",
+            "messages": [],
+            "metadata": {"completed": True}
+        }
+        with patch("agent.graph.get_graph") as mock_get_graph:
+            mock_graph = AsyncMock()
             mock_graph.ainvoke = AsyncMock(return_value=mock_result)
+            mock_get_graph.return_value = mock_graph
 
             result = await run_agent("test_session", "test_uid_001", "如何获得原石？")
 

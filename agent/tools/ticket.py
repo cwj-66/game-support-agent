@@ -1,16 +1,18 @@
 """
 工单创建工具
-使用 SQLite 持久化工单数据
+通过 MCP 协议写入 SQLite 数据库，不再直接 import sqlite3
 """
 
 import json
 import time
+import random
 from langchain_core.tools import tool
 
 
 @tool
-def create_ticket(user_id: str, issue_type: str, description: str) -> str:
-    """为玩家创建客服工单，适用于需要后台人工处理的问题。
+async def create_ticket(user_id: str, issue_type: str, description: str) -> str:
+    """为玩家创建客服工单，适用于需要后台异步处理的问题（封禁申诉、支付退款、Bug 反馈等）。
+    创建工单后直接结束对话，无需同时触发升人工。
 
     issue_type 枚举值：
     - account_ban：账号封禁申诉
@@ -18,7 +20,8 @@ def create_ticket(user_id: str, issue_type: str, description: str) -> str:
     - bug：游戏 bug 反馈
     - other：其他问题
 
-    当问题无法当场解决、用户需要留存凭证、或需要后台核查时调用此工具。
+    如果后续仍需要升人工，必须先调 create_ticket 创建工单，再调
+    escalate_to_human 并在 reason 参数中带上工单号，方便客服交接。
 
     Args:
         user_id: 玩家 UID
@@ -34,14 +37,14 @@ def create_ticket(user_id: str, issue_type: str, description: str) -> str:
     }
     title = title_map.get(issue_type, "客服工单")
 
-    # 优先级映射
+    # 优先级映射（P0 分钟级响应、P1 小时级、P2 天级）
     priority_map = {
-        "account_ban": "high",
-        "payment": "high",
-        "bug": "medium",
-        "other": "medium",
+        "account_ban": "P0",
+        "payment": "P0",
+        "bug": "P1",
+        "other": "P2",
     }
-    priority = priority_map.get(issue_type, "medium")
+    priority = priority_map.get(issue_type, "P2")
 
     # 预估处理时间
     estimated_map = {
@@ -52,21 +55,37 @@ def create_ticket(user_id: str, issue_type: str, description: str) -> str:
     }
     estimated = estimated_map.get(issue_type, "3-5 个工作日")
 
-    # 写入 SQLite
-    try:
-        from app.core.database import create_ticket as db_create
+    # 生成工单号（与 app.core.database 逻辑保持一致）
+    ticket_id = f"TK-{time.strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
 
-        ticket = db_create(
+    # 通过 MCP 写入 SQLite
+    try:
+        from agent.tools.mcp_client import mcp_write_query, _sqlesc
+
+        await mcp_write_query(
+            f"INSERT INTO tickets "
+            f"(ticket_id, player_uid, title, description, priority, status, created_at) "
+            f"VALUES ("
+            f"'{_sqlesc(ticket_id)}', "
+            f"'{_sqlesc(user_id)}', "
+            f"'{_sqlesc(title)}', "
+            f"'{_sqlesc(description)}', "
+            f"'{_sqlesc(priority)}', "
+            f"'processing', "
+            f"'{_sqlesc(now)}')"
+        )
+    except Exception as e:
+        # MCP 不可用时降级为直接写 SQLite（通过 app.core.database）
+        print(f"[ticket] MCP unavailable, falling back to direct DB write: {e}")
+        from app.core.database import create_ticket
+        db_ticket = create_ticket(
             player_uid=user_id,
             title=title,
             description=description,
             priority=priority,
         )
-        ticket_id = ticket.ticket_id
-    except Exception as e:
-        # 数据库不可用时降级为内存生成
-        ticket_id = f"TK{int(time.time())}"
-        print(f"[ticket] DB unavailable, using fallback ID: {e}")
+        ticket_id = db_ticket.ticket_id
 
     result = {
         "_health": {"ok": True, "confidence": 0.95, "message": None},

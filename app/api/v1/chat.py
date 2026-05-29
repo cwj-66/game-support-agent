@@ -36,16 +36,15 @@ router = APIRouter(prefix="/chat", tags=["对话"])
 
 
 def _get_interrupt_response(interrupt_payload: dict) -> str:
-    """根据中断来源生成合适的用户提示，避免对所有中断都说"敏感操作" """
+    """根据中断来源生成合适的用户提示"""
     source = interrupt_payload.get("source", "")
-    level = interrupt_payload.get("interrupt_level", "")
     reason = interrupt_payload.get("interrupt_reason", "")
 
-    # 敏感词检测 high 级别 → 保留安全提示
-    if source == "detector" and level == "high":
-        return "您的消息涉及敏感操作，已转交人工客服处理，请稍候。"
+    # detector 触发 → 统一提示
+    if source == "detector":
+        return "您的问题正在由专员核实，请稍候。"
 
-    # LLM 主动升等 → 用升等原因生成友好提示
+    # LLM 主动升等
     if source == "llm_escalate":
         if "知识库" in reason or "无结果" in reason or "找不到" in reason:
             return "抱歉，我暂时没有找到相关信息，已为您转接人工客服协助处理，请稍候。"
@@ -54,10 +53,6 @@ def _get_interrupt_response(interrupt_payload: dict) -> str:
     # 自动升等（工具失败/账号封禁等）
     if source == "auto_escalate":
         return "正在为您转接人工客服处理，请稍候。"
-
-    # 检测器低置信度
-    if source == "detector":
-        return "抱歉，我暂时无法确认这个问题的答案，已为您转接人工客服协助处理，请稍候。"
 
     return "正在为您转接人工客服，请稍候。"
 
@@ -110,12 +105,17 @@ async def send_message(
             if not isinstance(interrupt_payload, dict):
                 interrupt_payload = {}
             add_pending(request.session_id, interrupt_payload)
+            source = interrupt_payload.get("source", "")
             return ChatResponse(
                 session_id=request.session_id,
+                status="under_review",
                 response=_get_interrupt_response(interrupt_payload),
                 requires_review=True,
                 review_id=request.session_id,
-                metadata={"execution_time_ms": execution_time_ms},
+                metadata={
+                    "execution_time_ms": execution_time_ms,
+                    "interrupt_source": source,
+                },
             )
 
         final_response = result.get("final_response") or ""
@@ -140,6 +140,7 @@ async def send_message(
             add_pending(request.session_id, interrupt_payload)
             return ChatResponse(
                 session_id=request.session_id,
+                status="under_review",
                 response=_get_interrupt_response(interrupt_payload),
                 requires_review=True,
                 review_id=request.session_id,
@@ -162,7 +163,7 @@ async def get_chat_history(
 
     从 LangGraph checkpointer 中读取指定会话的消息列表
     """
-    checkpointer = get_checkpointer()
+    checkpointer = await get_checkpointer()
     config = {
         "configurable": {
             "thread_id": session_id,
@@ -171,7 +172,7 @@ async def get_chat_history(
     }
 
     # 兼容 LangGraph 不同版本的 checkpoint 查询
-    checkpoint_tuple = checkpointer.get_tuple(config)
+    checkpoint_tuple = await checkpointer.aget_tuple(config)
     if checkpoint_tuple is None:
         # 尝试不带 checkpoint_ns 查询
         config_no_ns = {"configurable": {"thread_id": session_id}}

@@ -1,6 +1,6 @@
 """
 工单查询工具
-供 LLM 在用户询问工单进度时查询
+通过 MCP 协议查询 SQLite 数据库，不再直接 import sqlite3
 """
 
 import json
@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 
 
 @tool
-def check_ticket(ticket_id: str = "", user_id: str = "") -> str:
+async def check_ticket(ticket_id: str = "", user_id: str = "") -> str:
     """查询工单处理进度和客服回复。
 
     两种情况使用此工具：
@@ -21,50 +21,56 @@ def check_ticket(ticket_id: str = "", user_id: str = "") -> str:
         user_id: 玩家 UID，找不到工单号时用此查该用户所有工单
     """
     try:
-        from app.core.database import get_ticket, list_tickets
+        from agent.tools.mcp_client import mcp_read_query, _sqlesc
 
         # 优先用工单号查
         if ticket_id:
-            ticket = get_ticket(ticket_id)
-            if ticket is None:
+            rows = await mcp_read_query(
+                f"SELECT * FROM tickets WHERE ticket_id = '{_sqlesc(ticket_id)}'"
+            )
+            if not rows:
                 return json.dumps(
                     {"found": False, "message": f"工单 {ticket_id} 不存在"},
                     ensure_ascii=False,
                 )
+            t = rows[0]
             return json.dumps(
                 {
                     "found": True,
-                    "ticket_id": ticket.ticket_id,
-                    "title": ticket.title,
-                    "description": ticket.description,
-                    "status": ticket.status,
-                    "priority": ticket.priority,
-                    "created_at": ticket.created_at,
-                    "resolved_at": ticket.resolved_at,
-                    "agent_reply": ticket.agent_reply or "",
-                    "human_reviewed": ticket.human_reviewed,
+                    "ticket_id": t["ticket_id"],
+                    "title": t["title"],
+                    "description": t["description"],
+                    "status": t["status"],
+                    "priority": t.get("priority", "P2"),
+                    "created_at": t.get("created_at", ""),
+                    "resolved_at": t.get("resolved_at", ""),
+                    "agent_reply": t.get("agent_reply") or "",
+                    "human_reviewed": bool(t.get("human_reviewed", 0)),
                 },
                 ensure_ascii=False,
             )
 
         # 没有工单号，用用户 ID 查最近工单
         if user_id:
-            tickets, total = list_tickets(player_uid=user_id, page_size=5)
+            rows = await mcp_read_query(
+                f"SELECT * FROM tickets WHERE player_uid = '{_sqlesc(user_id)}' "
+                f"ORDER BY created_at DESC LIMIT 5"
+            )
             items = []
-            for t in tickets:
+            for t in rows:
                 items.append(
                     {
-                        "ticket_id": t.ticket_id,
-                        "title": t.title,
-                        "status": t.status,
-                        "priority": t.priority,
-                        "created_at": t.created_at,
-                        "resolved_at": t.resolved_at,
-                        "agent_reply": t.agent_reply or "",
+                        "ticket_id": t["ticket_id"],
+                        "title": t["title"],
+                        "status": t["status"],
+                        "priority": t.get("priority", "P2"),
+                        "created_at": t.get("created_at", ""),
+                        "resolved_at": t.get("resolved_at", ""),
+                        "agent_reply": t.get("agent_reply") or "",
                     }
                 )
             return json.dumps(
-                {"total": total, "tickets": items}, ensure_ascii=False
+                {"total": len(items), "tickets": items}, ensure_ascii=False
             )
 
         return json.dumps(

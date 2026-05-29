@@ -62,7 +62,7 @@ async def route_from_detector(state: AgentState) -> Literal["human", "finish"]:
     return "finish"
 
 
-# ============ 图构建 ============
+# ============ 图构建（懒加载） ============
 
 workflow = StateGraph(AgentState)
 
@@ -98,7 +98,17 @@ workflow.add_conditional_edges(
 workflow.add_edge("human", "generate")
 workflow.add_edge("finish", END)
 
-graph = workflow.compile(checkpointer=get_checkpointer())
+# 编译后的图（懒加载，因为 checkpointer 初始化需要异步）
+_compiled_graph = None
+
+
+async def get_graph():
+    """获取已编译的 LangGraph 实例（懒加载）"""
+    global _compiled_graph
+    if _compiled_graph is None:
+        cp = await get_checkpointer()
+        _compiled_graph = workflow.compile(checkpointer=cp)
+    return _compiled_graph
 
 
 # ============ 执行入口 ============
@@ -123,7 +133,28 @@ async def run_agent(
     Returns:
         最终执行结果
     """
-    initial_state = create_initial_state(session_id, user_id, user_query, ticket_id=ticket_id)
+    # 尝试读取上一轮的 metadata，保留给下一轮
+    prev_metadata: dict | None = None
+    try:
+        cp = await get_checkpointer()
+        cfg = {
+            "configurable": {
+                "thread_id": thread_id or session_id,
+                "checkpoint_ns": "game_support_agent",
+            }
+        }
+        checkpoint_tuple = await cp.aget_tuple(cfg)
+        if checkpoint_tuple is not None:
+            cv = checkpoint_tuple.checkpoint.get("channel_values", {})
+            prev_metadata = cv.get("metadata")
+    except Exception:
+        pass  # 首次对话或无 checkpoint 时静默跳过
+
+    initial_state = create_initial_state(
+        session_id, user_id, user_query,
+        ticket_id=ticket_id,
+        metadata=prev_metadata,
+    )
 
     config = {
         "configurable": {
@@ -132,7 +163,8 @@ async def run_agent(
         }
     }
 
-    result = await graph.ainvoke(initial_state, config)
+    g = await get_graph()
+    result = await g.ainvoke(initial_state, config)
 
     # LangGraph interrupt() 在某些版本中不抛异常，而是正常返回带 __interrupt__ 的结果
     raw_interrupt = result.get("__interrupt__")
@@ -174,7 +206,28 @@ async def stream_agent(
     每个 chunk 格式：{"node_name": {state_updates}}
     供 SSE 接口逐步推送给前端
     """
-    initial_state = create_initial_state(session_id, user_id, user_query, ticket_id=ticket_id)
+    # 尝试读取上一轮的 metadata，保留给下一轮
+    prev_metadata: dict | None = None
+    try:
+        cp = await get_checkpointer()
+        cfg = {
+            "configurable": {
+                "thread_id": thread_id or session_id,
+                "checkpoint_ns": "game_support_agent",
+            }
+        }
+        checkpoint_tuple = await cp.aget_tuple(cfg)
+        if checkpoint_tuple is not None:
+            cv = checkpoint_tuple.checkpoint.get("channel_values", {})
+            prev_metadata = cv.get("metadata")
+    except Exception:
+        pass
+
+    initial_state = create_initial_state(
+        session_id, user_id, user_query,
+        ticket_id=ticket_id,
+        metadata=prev_metadata,
+    )
 
     config = {
         "configurable": {
@@ -183,8 +236,9 @@ async def stream_agent(
         }
     }
 
-    async for chunk in graph.astream(initial_state, config, stream_mode="updates"):
+    g = await get_graph()
+    async for chunk in g.astream(initial_state, config, stream_mode="updates"):
         yield chunk
 
 
-__all__ = ["graph", "run_agent", "stream_agent"]
+__all__ = ["get_graph", "run_agent", "stream_agent"]

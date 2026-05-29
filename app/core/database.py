@@ -65,7 +65,7 @@ def init_db():
                 title TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 category TEXT,
-                priority TEXT DEFAULT 'medium',
+                priority TEXT DEFAULT 'P2',
                 status TEXT DEFAULT 'pending',
                 agent_reply TEXT,
                 human_reviewed INTEGER DEFAULT 0,
@@ -87,12 +87,23 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_tickets_created ON tickets(created_at DESC)
         """)
 
+        # 迁移：将旧版优先级值映射到 P0/P1/P2
+        conn.execute("""
+            UPDATE tickets SET priority = 'P0' WHERE priority IN ('urgent', 'high')
+        """)
+        conn.execute("""
+            UPDATE tickets SET priority = 'P1' WHERE priority = 'medium'
+        """)
+        conn.execute("""
+            UPDATE tickets SET priority = 'P2' WHERE priority IN ('low', '')
+        """)
+
 
 def create_ticket(
     player_uid: str,
     title: str,
     description: str,
-    priority: str = "medium",
+    priority: str = "P2",
     session_id: Optional[str] = None,
 ) -> Ticket:
     """创建新工单，返回工单对象"""
@@ -252,13 +263,18 @@ def get_ticket_stats() -> TicketStats:
 
 def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     """将数据库行转换为 Ticket 对象"""
+    # 旧版优先级向后兼容映射
+    _legacy_priority_map = {"urgent": "P0", "high": "P0", "medium": "P1", "low": "P2"}
+    raw_priority = row["priority"]
+    priority = _legacy_priority_map.get(raw_priority, raw_priority)
+
     return Ticket(
         ticket_id=row["ticket_id"],
         player_uid=row["player_uid"],
         title=row["title"],
         description=row["description"],
         category=row["category"],
-        priority=row["priority"],
+        priority=priority,
         status=row["status"],
         agent_reply=row["agent_reply"],
         human_reviewed=bool(row["human_reviewed"]),

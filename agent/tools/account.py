@@ -13,6 +13,8 @@ def lookup_account(user_id: str) -> str:
     """查询玩家账号状态，包括封禁情况和充值记录。
 
     当用户询问自己的账号状态、是否被封禁、充值记录时调用此工具。
+    若查到 status 为 banned，请先告知用户封禁原因（ban_reason），
+    然后询问是否需要创建申诉工单，待用户确认后再调 create_ticket。
 
     Args:
         user_id: 玩家 UID（用户提供的数字即为UID，如"221"、"id12345"）

@@ -7,7 +7,7 @@ from datetime import datetime
 
 
 TicketStatus = Literal["pending", "processing", "resolved", "escalated"]
-TicketPriority = Literal["low", "medium", "high", "urgent"]
+TicketPriority = Literal["P0", "P1", "P2"]
 TicketCategory = Literal["gameplay", "account", "payment", "bug", "complaint", "other"]
 
 
@@ -16,7 +16,7 @@ class TicketCreate(BaseModel):
     player_uid: str = Field(..., description="玩家游戏UID", min_length=1, max_length=64)
     title: str = Field(..., description="工单标题", min_length=1, max_length=200)
     description: str = Field(..., description="问题描述", min_length=1, max_length=2000)
-    priority: TicketPriority = Field(default="medium", description="优先级")
+    priority: TicketPriority = Field(default="P2", description="优先级：P0 分钟级响应、P1 小时级、P2 天级")
 
 
 class TicketUpdate(BaseModel):
@@ -34,7 +34,7 @@ class Ticket(BaseModel):
     title: str
     description: str
     category: Optional[TicketCategory] = Field(default=None, description="Agent分类结果")
-    priority: TicketPriority = "medium"
+    priority: TicketPriority = "P2"
     status: TicketStatus = "pending"
     agent_reply: Optional[str] = Field(default=None, description="Agent自动回复")
     human_reviewed: bool = False

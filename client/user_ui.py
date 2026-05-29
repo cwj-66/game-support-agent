@@ -6,6 +6,7 @@ Streamlit 用户界面
 import streamlit as st
 import httpx
 import asyncio
+import time
 import uuid
 
 st.set_page_config(
@@ -62,6 +63,16 @@ class APIClient:
         except Exception:
             return None
 
+    async def check_review_status(self, session_id: str) -> dict:
+        """查询会话的审核状态"""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as c:
+                r = await c.get(f"{API_BASE_URL}/human/status/{session_id}")
+                r.raise_for_status()
+                return r.json()
+        except Exception:
+            return {"has_pending_review": True}
+
 
 # ── 页面 ──
 
@@ -103,30 +114,55 @@ def chat_tab(client: APIClient):
 
         st.session_state.waiting = True
         with st.chat_message("assistant"):
-            with st.spinner("思考中…"):
-                try:
-                    result = asyncio.run(
-                        client.send_message(
-                            st.session_state.session_id,
-                            st.session_state.user_id,
-                            prompt,
-                        )
+            try:
+                result = asyncio.run(
+                    client.send_message(
+                        st.session_state.session_id,
+                        st.session_state.user_id,
+                        prompt,
                     )
-                    response = result.get("response", "抱歉，暂时无法处理，请稍后再试。")
+                )
+                response = result.get("response", "抱歉，暂时无法处理，请稍后再试。")
 
-                    if result.get("requires_review"):
-                        response += "\n\n⏳ *该问题已转交人工客服审核，请耐心等待。*"
+                if result.get("status") == "under_review":
+                    # 显示审核等待提示
+                    st.info(response)
+                    st.session_state.messages.append({"role": "assistant", "content": response + "\n\n⏳ *正在等待专员审核…*"})
 
+                    # 轮询审核状态，每 5 秒一次
+                    with st.spinner("专员正在审核中，请稍候…"):
+                        sid = st.session_state.session_id
+                        while True:
+                            time.sleep(5)
+                            status = asyncio.run(client.check_review_status(sid))
+                            if not status.get("has_pending_review"):
+                                break
+
+                    # 审核完成，从历史中获取最终回复
+                    history = asyncio.run(client.get_history(sid))
+                    final_response = None
+                    if history:
+                        for msg in reversed(history):
+                            if msg.get("role") == "assistant" and not msg.get("requires_review"):
+                                final_response = msg["content"]
+                                break
+                    if not final_response:
+                        final_response = "专员已处理完成，请查看工单进度或重新提问。"
+                    st.success("✅ 专员已处理完成")
+                    st.markdown(final_response)
+                    # 更新最后一条 assistant 消息为最终回复
+                    st.session_state.messages[-1] = {"role": "assistant", "content": final_response}
+                else:
                     st.markdown(response)
                     st.session_state.messages.append({"role": "assistant", "content": response})
 
-                except Exception as e:
-                    err_msg = f"请求失败：{e}"
-                    st.error(err_msg)
-                    st.session_state.messages.append({"role": "assistant", "content": err_msg})
-                finally:
-                    st.session_state.waiting = False
-            st.rerun()
+            except Exception as e:
+                err_msg = f"请求失败：{e}"
+                st.error(err_msg)
+                st.session_state.messages.append({"role": "assistant", "content": err_msg})
+            finally:
+                st.session_state.waiting = False
+        st.rerun()
 
 
 def ticket_create_tab(client: APIClient):
@@ -150,7 +186,7 @@ def ticket_create_tab(client: APIClient):
         description = st.text_area("详细描述", placeholder="请详细描述您遇到的问题…", height=150)
         priority = st.selectbox(
             "优先级",
-            options=[("high", "高（紧急）"), ("medium", "中（普通）"), ("low", "低（建议反馈）")],
+            options=[("P0", "P0 紧急（分钟级响应）"), ("P1", "P1 普通（小时级响应）"), ("P2", "P2 低（天级响应）")],
             format_func=lambda x: x[1],
         )
 

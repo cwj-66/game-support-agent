@@ -29,14 +29,8 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
     elif messages:
         llm = get_chat_model()
 
-        session_summary = state.get("session_summary")
-        summary_messages = []
-        if session_summary:
-            summary_messages = [SystemMessage(content=f"【历史对话摘要】{session_summary}")]
-
         ai_result = await llm.ainvoke([
             SystemMessage(content=CUSTOMER_SERVICE_PROMPT),
-            *summary_messages,
             HumanMessage(content=user_query),
             *messages,
         ])

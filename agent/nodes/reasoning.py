@@ -67,6 +67,28 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     user_query = state["user_query"]
     user_id = state.get("user_id", "")
     history = state.get("messages", [])
+    metadata = state.get("metadata", {})
+
+    # ReAct 超限兜底：直接输出优雅降级回复，不再调 LLM
+    react_timeout = metadata.get("react_timeout")
+    if react_timeout:
+        ticket_id = react_timeout.get("ticket_id")
+        reason = react_timeout.get("reason", "")
+        if ticket_id:
+            content = (
+                f"抱歉，我多次尝试后仍无法解决您的问题。"
+                f"已为您创建工单 {ticket_id}，会有专人在1-3个工作日内与您联系。"
+                f"感谢您的耐心等待。"
+            )
+        else:
+            content = (
+                f"抱歉，我多次尝试后仍无法解决您的问题。"
+                f"建议您联系人工客服获取进一步帮助。"
+            )
+        return {
+            "messages": [AIMessage(content=content)],
+            "metadata": metadata,
+        }
 
     system_prompt = GAME_SUPPORT_SYSTEM_PROMPT
     if user_id:

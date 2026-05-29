@@ -32,9 +32,9 @@ def _fallback(message: str) -> str:
             "message": message,
             "confidence": 0.0,
             "_health": {
-                "ok": False,
+                "ok": True,
                 "confidence": 0.0,
-                "needs_escalation": True,
+                "needs_escalation": False,
                 "message": message,
             },
         },
@@ -43,24 +43,24 @@ def _fallback(message: str) -> str:
 
 
 def _inject_health(json_str: str) -> str:
-    """向工具返回的 JSON 注入 _health 字段，供升等检测器和 tool_exec 通用判断"""
+    """向工具返回的 JSON 注入 _health 字段，供升等检测器和 tool_exec 通用判断
+
+    注意：知识库未命中不再自动升等。
+    """
     try:
         data = json.loads(json_str)
     except (json.JSONDecodeError, ValueError):
         return json_str
     has_answer = data.get("has_answer", True)
     confidence = data.get("confidence")
-    needs_escalation = (
-        not has_answer
-        or (confidence is not None and confidence < RAG_CONFIDENCE_THRESHOLD)
-    )
+    quality_ok = has_answer and (confidence is None or confidence >= RAG_CONFIDENCE_THRESHOLD)
     data["_health"] = {
-        "ok": not needs_escalation,
+        "ok": True,                         # 不阻断下游——AI 仍可正常生成回复
         "confidence": confidence,
-        "needs_escalation": needs_escalation,
+        "needs_escalation": False,           # 知识库未命中 → 不自动升等
         "message": (
             None
-            if not needs_escalation
+            if quality_ok
             else (
                 "知识库未找到相关答案"
                 if not has_answer

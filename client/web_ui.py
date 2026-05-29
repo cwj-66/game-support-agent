@@ -27,8 +27,8 @@ STATUS_STYLE = {
     "resolved": ("✅", "已解决", "#5cb85c"),
     "escalated": ("🔴", "已升等", "#d9534f"),
 }
-PRIORITY_ORDER = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
-PRIORITY_LABEL = {"urgent": "紧急", "high": "高", "medium": "中", "low": "低"}
+PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2}
+PRIORITY_LABEL = {"P0": "P0-紧急", "P1": "P1-普通", "P2": "P2-低"}
 
 
 # ============ API 客户端 ============
@@ -130,88 +130,90 @@ class TicketClient:
             return {}
 
 
-# ============ Tab 1：待审核任务（Human-in-loop）============
+# ============ 合并工单看板（P0/P1/P2 分栏）============
 
 def render_risk_badge(level: str) -> str:
     colors = {"high": "🔴 高风险", "medium": "🟡 中风险", "low": "🟢 低风险"}
     return colors.get(level, "⚪ 未知")
 
 
-def render_pending_tasks(client: ReviewAPIClient):
-    st.header("📋 待审核任务")
+def _render_hil_mini(task: dict, client: ReviewAPIClient):
+    """紧凑型审核卡片，嵌入 P0 栏"""
+    session_id = task.get("session_id", "")
+    risk = task.get("risk_level", "low")
+    badge = render_risk_badge(risk)
 
-    with st.spinner("加载中..."):
-        tasks = asyncio.run(client.get_pending_reviews())
+    with st.popover(f"{badge} {(task.get('user_query') or '')[:30]}…", use_container_width=True):
+        st.markdown(f"**用户问题**：{task.get('user_query', '无')}")
+        st.markdown(f"**Agent回复**：{task.get('agent_response', '无')}")
+        st.markdown(f"**触发原因**：{task.get('interrupt_reason', '未知')}")
 
-    st.session_state["pending_count"] = len(tasks)
+        reviewer_id = st.session_state.get("reviewer_id", "admin_001")
+        modified = st.text_area(
+            "修改内容（可选）",
+            value=task.get("agent_response", ""),
+            height=80,
+            key=f"hil_text_{session_id}",
+        )
 
-    if not tasks:
-        st.info("暂无待审核任务 🎉")
-        return
+        ca, cb, cc = st.columns(3)
+        with ca:
+            if st.button("✅ 通过", key=f"hil_app_{session_id}", use_container_width=True):
+                asyncio.run(client.submit_review(session_id, "APPROVE", reviewer_id))
+                st.rerun()
+        with cb:
+            if st.button("✏️ 修改", key=f"hil_mod_{session_id}", use_container_width=True):
+                asyncio.run(client.submit_review(session_id, "MODIFY", reviewer_id, modified))
+                st.rerun()
+        with cc:
+            if st.button("📝 覆盖", key=f"hil_ovr_{session_id}", use_container_width=True):
+                asyncio.run(client.submit_review(session_id, "OVERRIDE", reviewer_id, modified))
+                st.rerun()
 
-    for task in tasks:
-        with st.expander(
-            f"[{render_risk_badge(task.get('risk_level'))}] "
-            f"{task.get('user_query', '无问题')[:50]}...",
-            expanded=False,
-        ):
-            col1, col2 = st.columns([2, 1])
 
-            with col1:
-                st.subheader("用户问题")
-                st.info(task.get("user_query", "无"))
-                st.subheader("Agent回复")
-                st.warning(task.get("agent_response", "无"))
-                st.subheader("触发原因")
-                st.error(task.get("interrupt_reason", "未知"))
+def _render_compact_ticket(ticket: dict, client: TicketClient):
+    """紧凑型工单卡片，用于分栏展示"""
+    tid = ticket["ticket_id"]
+    status = ticket.get("status", "pending")
+    emoji, label, color = STATUS_STYLE.get(status, ("⚪", "未知", "#ccc"))
 
-            with col2:
-                st.subheader("审核操作")
-                reviewer_id = st.session_state.get("reviewer_id", "admin_001")
-                session_id = task.get("session_id")
+    with st.container(border=True):
+        cols = st.columns([3, 1])
+        with cols[0]:
+            st.markdown(f"**{emoji} {tid}**")
+            st.caption(f"👤 {ticket.get('player_uid', '')} · {ticket.get('title', '')[:25]}")
+        with cols[1]:
+            st.markdown(f"<span style='color:{color}'>{label}</span>", unsafe_allow_html=True)
+            st.caption((ticket.get("created_at", "") or "")[:10])
 
-                modified_content = st.text_area(
-                    "修改后的内容（如需修改）",
-                    value=task.get("agent_response", ""),
-                    height=150,
-                    key=f"modify_{session_id}",
+        if status in ("pending", "processing", "escalated"):
+            with st.expander("✏️ 处理", expanded=False):
+                new_status = st.selectbox(
+                    "状态", ["", "processing", "resolved"], key=f"cst_{tid}"
                 )
-
-                btn_col1, btn_col2, btn_col3 = st.columns(3)
-                with btn_col1:
-                    if st.button("✅ 通过", key=f"approve_{session_id}", use_container_width=True):
-                        asyncio.run(client.submit_review(session_id, "APPROVE", reviewer_id))
-                        st.success("已通过")
+                new_reply = st.text_area(
+                    "回复", height=80, key=f"crp_{tid}",
+                    placeholder="处理结果将返回给玩家…",
+                )
+                reviewer = st.session_state.get("csr_id", "csr_001")
+                if st.button("✅ 提交", key=f"csb_{tid}", use_container_width=True):
+                    ok = asyncio.run(client.update_ticket(
+                        tid, status=new_status or None,
+                        agent_reply=new_reply or None,
+                        reviewer_id=reviewer,
+                    ))
+                    if ok:
+                        st.success("已更新")
                         st.rerun()
-                with btn_col2:
-                    if st.button("✏️ 修改", key=f"modify_{session_id}", use_container_width=True):
-                        if not modified_content or modified_content == task.get("agent_response"):
-                            st.error("请先修改内容")
-                        else:
-                            asyncio.run(
-                                client.submit_review(session_id, "MODIFY", reviewer_id, modified_content)
-                            )
-                            st.success("已修改并通过")
-                            st.rerun()
-                with btn_col3:
-                    if st.button("📝 覆盖", key=f"override_{session_id}", use_container_width=True):
-                        if not modified_content:
-                            st.error("覆盖操作需要填写新内容")
-                        else:
-                            asyncio.run(
-                                client.submit_review(session_id, "OVERRIDE", reviewer_id, modified_content)
-                            )
-                            st.success("已覆盖")
-                            st.rerun()
 
 
-# ============ Tab 2：工单管理 ============
+# ============ 工单管理 ============
 
 def _ticket_card(ticket: dict, client: TicketClient):
     """单个工单卡片"""
     tid = ticket["ticket_id"]
     status = ticket.get("status", "pending")
-    priority = ticket.get("priority", "medium")
+    priority = ticket.get("priority", "P2")
     emoji, label, color = STATUS_STYLE.get(status, ("⚪", "未知", "#ccc"))
 
     # 卡片头
@@ -293,107 +295,111 @@ def _ticket_card(ticket: dict, client: TicketClient):
     st.divider()
 
 
-def render_ticket_management(client: TicketClient):
-    st.header("📋 工单管理")
+def render_workspace(review_client: ReviewAPIClient, ticket_client: TicketClient):
+    """合并工单看板：HIL 审核任务嵌入 P0 栏，按 P0/P1/P2 分栏展示"""
 
-    reviewer_id = st.session_state.get("csr_id", "csr_001")
+    # ── 加载数据 ──
+    with st.spinner("加载数据…"):
+        stats = asyncio.run(ticket_client.stats())
+        pending_tasks = asyncio.run(review_client.get_pending_reviews())
+    st.session_state["pending_count"] = len(pending_tasks)
 
-    # 快捷查询
-    with st.container(border=True):
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            q = st.text_input(
-                "按工单号查询",
-                placeholder="输入工单号如 TK-20260526-xxxx",
-                label_visibility="collapsed",
-            )
-        with col2:
-            search_click = st.button("🔍 查询", use_container_width=True, type="primary")
-
-        if (search_click or q) and q.strip():
-            with st.spinner("查询中…"):
-                ticket = asyncio.run(client.get_ticket(q.strip()))
-            if ticket:
-                _ticket_card(ticket, client)
-            else:
-                st.warning(f"未找到工单：{q.strip()}")
-            st.markdown("---")
-
-    # 统计看板
-    with st.spinner("加载统计数据…"):
-        stats = asyncio.run(client.stats())
-    if stats:
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("全部工单", stats.get("total", 0))
-        c2.metric("等待处理", stats.get("pending", 0))
-        c3.metric("处理中", stats.get("processing", 0))
-        c4.metric("已解决", stats.get("resolved", 0))
-        c5.metric("已升等", stats.get("escalated", 0))
-        c6.metric("人工审核", stats.get("human_reviewed", 0))
+    # ── 统计看板 ──
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("全部工单", stats.get("total", 0))
+    c2.metric("等待处理", stats.get("pending", 0))
+    c3.metric("处理中", stats.get("processing", 0))
+    c4.metric("已解决", stats.get("resolved", 0))
+    c5.metric("待审核", len(pending_tasks))
+    c6.metric("人工审核", stats.get("human_reviewed", 0))
 
     st.markdown("---")
 
-    # 筛选
-    col1, col2, col3 = st.columns([1, 1, 2])
-    with col1:
+    # ── 快捷查询 ──
+    col_q1, col_q2 = st.columns([3, 1])
+    with col_q1:
+        q = st.text_input("###", placeholder="按工单号查询 TK-20260526-xxxx", label_visibility="collapsed")
+    with col_q2:
+        search_click = st.button("🔍 查询", use_container_width=True, type="primary")
+    if (search_click or q) and q.strip():
+        with st.spinner(""):
+            ticket = asyncio.run(ticket_client.get_ticket(q.strip()))
+        if ticket:
+            st.markdown("---")
+            _ticket_card(ticket, ticket_client)
+            st.markdown("---")
+        else:
+            st.warning(f"未找到工单：{q.strip()}")
+            st.markdown("---")
+
+    # ── 筛选 ──
+    col_f1, col_f2 = st.columns([1, 1])
+    with col_f1:
         status_filter = st.selectbox(
-            "状态",
-            ["全部", "pending", "processing", "resolved", "escalated"],
-            index=0,
+            "状态", ["全部待处理", "pending", "processing", "escalated"], index=0,
         )
-    with col2:
-        priority_filter = st.selectbox(
-            "优先级",
-            ["全部", "urgent", "high", "medium", "low"],
-            index=0,
-        )
-    with col3:
-        player_filter = st.text_input(
-            "玩家 UID", placeholder="按玩家 UID 筛选", label_visibility="collapsed"
-        )
+    with col_f2:
+        player_filter = st.text_input("玩家 UID", placeholder="按 UID 筛选", label_visibility="collapsed")
 
-    # 拆分待处理 / 已解决 Tab
-    if status_filter == "全部":
-        tab_a, tab_b = st.tabs(["📋 待处理工单", "✅ 已解决工单"])
+    # ── 获取工单 ──
+    with st.spinner("加载工单…"):
+        data = asyncio.run(ticket_client.list_tickets(player_uid=player_filter or None))
+    all_tickets = data.get("tickets", [])
 
-        with tab_a:
-            with st.spinner("加载待处理工单…"):
-                data = asyncio.run(client.list_tickets(player_uid=player_filter or None))
-            tickets = [t for t in data.get("tickets", [])
-                       if t.get("status") in ("pending", "processing", "escalated")]
-            if priority_filter != "全部":
-                tickets = [t for t in tickets if t.get("priority") == priority_filter]
-            tickets.sort(key=lambda t: PRIORITY_ORDER.get(t.get("priority", "medium"), 99))
-            st.caption(f"待处理工单数：{len(tickets)}")
-            if not tickets:
-                st.info("暂无待处理工单")
-            for t in tickets:
-                _ticket_card(t, client)
-
-        with tab_b:
-            with st.spinner("加载已解决工单…"):
-                data = asyncio.run(client.list_tickets(status="resolved",
-                                                        player_uid=player_filter or None))
-            tickets = data.get("tickets", [])
-            if priority_filter != "全部":
-                tickets = [t for t in tickets if t.get("priority") == priority_filter]
-            st.caption(f"已解决工单数：{len(tickets)}")
-            if not tickets:
-                st.info("暂无已解决工单")
-            for t in tickets[:30]:
-                _ticket_card(t, client)
+    # 状态筛选
+    if status_filter == "全部待处理":
+        active = [t for t in all_tickets if t.get("status") in ("pending", "processing", "escalated")]
     else:
-        with st.spinner(f"加载工单列表…"):
-            data = asyncio.run(client.list_tickets(
-                status=status_filter, player_uid=player_filter or None))
-        tickets = data.get("tickets", [])
-        if priority_filter != "全部":
-            tickets = [t for t in tickets if t.get("priority") == priority_filter]
-        st.caption(f"共 {len(tickets)} 条工单")
-        if not tickets:
-            st.info("暂无匹配的工单")
-        for t in tickets:
-            _ticket_card(t, client)
+        active = [t for t in all_tickets if t.get("status") == status_filter]
+
+    # 按优先级分组
+    p0_list = [t for t in active if t.get("priority") == "P0"]
+    p1_list = [t for t in active if t.get("priority") == "P1"]
+    p2_list = [t for t in active if t.get("priority") == "P2"]
+
+    st.markdown("---")
+
+    # ── P0 栏（置顶，视觉高亮，包含 HIL 审核任务）──
+    with st.container(border=True):
+        st.markdown("### 🔴 P0 — 紧急（分钟级响应）")
+
+        # HIL 审核任务排在 P0 工单前面
+        if pending_tasks:
+            for task in pending_tasks:
+                _render_hil_mini(task, review_client)
+
+        if not p0_list and not pending_tasks:
+            st.info("无待处理 P0 工单")
+        else:
+            for t in p0_list:
+                _render_compact_ticket(t, ticket_client)
+
+    st.markdown("---")
+
+    # ── P1 / P2 两栏 ──
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        st.markdown("### 🟡 P1 — 普通（小时级响应）")
+        if not p1_list:
+            st.info("无待处理 P1 工单")
+        else:
+            for t in p1_list:
+                _render_compact_ticket(t, ticket_client)
+    with col_p2:
+        st.markdown("### P2 — 低优（天级响应）")
+        if not p2_list:
+            st.info("无待处理 P2 工单")
+        else:
+            for t in p2_list:
+                _render_compact_ticket(t, ticket_client)
+
+    # ── 已解决工单（折叠） ──
+    resolved = [t for t in all_tickets if t.get("status") == "resolved"]
+    with st.expander(f"✅ 已解决工单（{len(resolved)} 条）"):
+        if not resolved:
+            st.info("暂无已解决工单")
+        for t in resolved:
+            _ticket_card(t, ticket_client)
 
 
 # ============ Tab 3：审核历史 ============
@@ -407,6 +413,14 @@ def render_help():
     """帮助信息"""
     with st.expander("❓ 使用帮助"):
         st.markdown("""
+        ### 工单看板说明
+
+        - **🔴 P0 栏（置顶高亮）**：分钟级响应，包含 HIL 待审核任务和 P0 工单
+        - **🟡 P1 栏**：小时级响应，普通问题
+        - **P2 栏**：天级响应，低优问题
+        - 在每张工单卡片可展开「处理」菜单快速更新状态和回复
+        - 已解决工单折叠在底部，可展开查看
+
         ### 审核操作说明
 
         - **✅ 通过 (APPROVE)**: 直接通过Agent的回复，不做修改
@@ -415,8 +429,8 @@ def render_help():
 
         ### 工单处理说明
 
-        - 在「工单管理」Tab 中查看和处理玩家提交的工单
-        - 选择状态 + 填写处理结果后提交
+        - 在「工单看板」中按 P0→P1→P2 分栏查看和处理工单
+        - 展开工单卡片中的「处理」菜单，选择状态 + 填写结果后提交
         - 玩家后续查询工单时，Agent 会自动读取处理结果
 
         ### 风险等级
@@ -473,15 +487,13 @@ def main():
     review_client = ReviewAPIClient()
     ticket_client = TicketClient()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["待审核任务", "工单管理", "审核历史", "帮助"])
+    tab1, tab2, tab3 = st.tabs(["📋 工单看板", "📜 审核历史", "❓ 帮助"])
 
     with tab1:
-        render_pending_tasks(review_client)
+        render_workspace(review_client, ticket_client)
     with tab2:
-        render_ticket_management(ticket_client)
-    with tab3:
         render_audit_history()
-    with tab4:
+    with tab3:
         render_help()
 
 
