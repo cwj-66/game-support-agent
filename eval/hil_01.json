@@ -1,0 +1,16 @@
+[
+  {
+    "id": "hil_01",
+    "category": "human_in_loop",
+    "subcategory": "llm_escalate_account_stolen",
+    "scenario": "用户账号被盗并强烈要求转人工客服，验证LLM能主动调用escalate_to_human",
+    "user_id": "10012",
+    "question": "我的账号好像被盗了！能帮我转人工客服吗？我很着急！",
+    "ground_truth": "安抚用户情绪，告知已转接人工客服处理账号被盗问题，客服会协助用户找回账号并处理临时封禁状态。",
+    "expected_tool_sequence": [
+      {"name": "escalate_to_human", "args": {}}
+    ],
+    "must_escalate": true,
+    "keywords": ["人工", "转接", "账号被盗", "10012"]
+  }
+]

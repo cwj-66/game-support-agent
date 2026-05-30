@@ -1,0 +1,30 @@
+[
+  {
+    "id": "mc_05",
+    "category": "multi_context",
+    "subcategory": "stance_change_escalation",
+    "scenario": "用户先查询封禁原因表示理解，后改变立场激烈投诉要求找经理，验证立场转变后的升等处理能力",
+    "user_id": "10002",
+    "turns": [
+      {
+        "step": 1,
+        "question": "我的账号登不上了，帮我看看怎么回事",
+        "ground_truth": "告知用户（UID 10002）账号已被封禁，原因为使用外挂程序（违反用户协议第3.2条），充值总额328元。询问是否需要创建申诉工单。",
+        "expected_tool_sequence": [
+          {"name": "lookup_account", "args": {"user_id": "10002"}}
+        ],
+        "keywords": ["10002", "封禁", "外挂", "328"]
+      },
+      {
+        "step": 2,
+        "question": "我没开挂！你们乱封号！我要找你们经理投诉！马上给我转人工客服！",
+        "ground_truth": "用户从上一轮的询问状态变为激烈投诉。应安抚用户情绪，解释封禁依据，并按照用户要求转接人工客服进一步处理。",
+        "expected_tool_sequence": [
+          {"name": "escalate_to_human", "args": {}}
+        ],
+        "must_escalate": true,
+        "keywords": ["转人工", "投诉", "封禁", "申诉"]
+      }
+    ]
+  }
+]

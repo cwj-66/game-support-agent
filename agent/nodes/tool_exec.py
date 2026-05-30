@@ -42,7 +42,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             break
 
     if not last_ai:
-        return {}
+        return {"node_trace": ["tool_exec"]}
 
     tools_map = {t.name: t for t in get_all_tools()}
     tool_messages: List[ToolMessage] = []
@@ -183,6 +183,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
         "messages": tool_messages,
         "tool_calls": state.get("tool_calls", []) + tool_call_records,
         "metadata": metadata,
+        "node_trace": ["tool_exec"],
     }
     if _new_ticket_id is not None:
         result["ticket_id"] = _new_ticket_id

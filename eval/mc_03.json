@@ -1,0 +1,30 @@
+[
+  {
+    "id": "mc_03",
+    "category": "multi_context",
+    "subcategory": "cross_session_ticket_context",
+    "scenario": "跨线程/跨会话场景：用户先创建充值工单，新对话中通过UID查询之前的问题进度，验证工单系统作为跨线程上下文管理能力",
+    "user_id": "10003",
+    "turns": [
+      {
+        "step": 1,
+        "question": "我的充值没到账，帮我创建工单",
+        "ground_truth": "查询用户（UID 10003）的充值情况（充值异常、充值未到账）后，为用户创建充值问题工单（payment），给出工单号和1-3个工作日处理时限。",
+        "expected_tool_sequence": [
+          {"name": "create_ticket", "args": {}}
+        ],
+        "keywords": ["TK-", "充值", "工单", "payment"]
+      },
+      {
+        "step": 2,
+        "new_session": true,
+        "question": "我之前的问题处理好了吗？",
+        "ground_truth": "当前对话无历史记录（新会话），但系统根据用户UID 10003，通过check_ticket(user_id=\"10003\")从工单数据库查到该用户最近的工单，告知用户当前处理进度。这验证了工单系统作为跨会话上下文管理的能力。",
+        "expected_tool_sequence": [
+          {"name": "check_ticket", "args": {}}
+        ],
+        "keywords": ["10003", "TK-", "处理", "工单"]
+      }
+    ]
+  }
+]

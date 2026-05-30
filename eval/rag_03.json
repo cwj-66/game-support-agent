@@ -1,0 +1,15 @@
+[
+  {
+    "id": "rag_03",
+    "category": "retrieval_semantic",
+    "user_id": "10001",
+    "question": "回声之子部族住在纳塔的什么地方？他们是哪个部落的？",
+    "ground_truth": "回声之子（Children of Echoes）位于纳塔的Tequemecan Valley，是Nanatzcayan部落的家园。",
+    "keywords": [
+      "Children of Echoes",
+      "Tequemecan Valley",
+      "Natlan",
+      "Nanatzcayan"
+    ]
+  }
+]

@@ -25,7 +25,9 @@ class Settings(BaseSettings):
         MCP_SERVER_URL: MCP服务器地址
         
         OPENAI_API_KEY: LLM API Key
-        MODEL_NAME: 使用的模型名称
+        MODEL_NAME: (已弃用，请用 REASONING_MODEL_NAME)
+        REASONING_MODEL_NAME: reasoning 节点的模型
+        GENERATE_MODEL_NAME: generate 节点的模型
         
         HIL_ENABLED: 是否启用Human-in-loop
         中断检测的敏感词在 human_in_loop.detector 中管理
@@ -62,7 +64,15 @@ class Settings(BaseSettings):
     )
     MODEL_NAME: str = Field(
         default="qwen-turbo",
-        description="使用的LLM模型"
+        description="推理节点使用的LLM模型（已弃用，请用 REASONING_MODEL_NAME）"
+    )
+    REASONING_MODEL_NAME: str = Field(
+        default="qwen-turbo",
+        description="reasoning 推理节点使用的LLM模型"
+    )
+    GENERATE_MODEL_NAME: str = Field(
+        default="qwen-turbo",
+        description="generate 润色节点使用的轻量模型（可改为 qwen-turbo/qwen3.6-flash 等低成本模型）"
     )
     LLM_BASE_URL: Optional[str] = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",

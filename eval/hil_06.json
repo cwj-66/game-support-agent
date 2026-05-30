@@ -1,0 +1,17 @@
+[
+  {
+    "id": "hil_06",
+    "category": "human_in_loop",
+    "subcategory": "reverse_normal_account_query",
+    "scenario": "正常账号查询，验证不会误触发升等或detector",
+    "user_id": "10004",
+    "question": "帮我查一下我的充值情况",
+    "ground_truth": "充值总额为648元（UID 10004）。",
+    "expected_tool_sequence": [
+      {"name": "lookup_account", "args": {"user_id": "10004"}}
+    ],
+    "must_escalate": false,
+    "forbidden_actions": ["escalate_to_human"],
+    "keywords": ["10004", "648", "正常"]
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "rag_02",
+    "category": "retrieval_exact",
+    "user_id": "10001",
+    "question": "本地传奇「祂从未死去」在等级90时的生命值、攻击力和防御力分别是多少？",
+    "ground_truth": "等级90时HP为3,190,625，ATK为22,838，DEF为950。",
+    "keywords": [
+      "He Never Dies",
+      "HP",
+      "ATK",
+      "DEF",
+      "3190625",
+      "22838",
+      "Local Legend"
+    ]
+  }
+]

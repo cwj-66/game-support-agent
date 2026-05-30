@@ -1,0 +1,29 @@
+[
+  {
+    "id": "mc_02",
+    "category": "multi_context",
+    "subcategory": "pronoun_reference_knowledge",
+    "scenario": "同会话内先查原石获取途径，再用'那'指代上文继续问浓缩树脂，验证代词'那'在知识查询场景的延续理解",
+    "user_id": "10001",
+    "turns": [
+      {
+        "step": 1,
+        "question": "如何获得原石？有哪些获取途径？",
+        "ground_truth": "告知用户原石的获取途径：每日委托（60原石/天）、深境螺旋（每月刷新）、活动奖励、版本更新补偿、星辉兑换等。",
+        "expected_tool_sequence": [
+          {"name": "query_knowledge", "args": {}}
+        ],
+        "keywords": ["原石", "每日委托", "深境螺旋", "活动"]
+      },
+      {
+        "step": 2,
+        "question": "那浓缩树脂呢？有哪些获取途径？",
+        "ground_truth": "告知用户浓缩树脂的获取方式：在璃月声望达到3级后领取合成图纸，然后在合成台用1个晶核+40原粹树脂合成。",
+        "expected_tool_sequence": [
+          {"name": "query_knowledge", "args": {}}
+        ],
+        "keywords": ["浓缩树脂", "璃月", "声望", "合成"]
+      }
+    ]
+  }
+]

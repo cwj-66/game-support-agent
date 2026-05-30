@@ -1,11 +1,21 @@
-"""账号状态规则（根据 UID 末位数字决定）：
-  - 1 → normal（正常状态）
-  - 2 → banned（封禁状态）
-  - 3 → recharge_abnormal（充值出现异常）
-"""
+"""查询账号状态（从 data/accounts.json 读取 mock 数据）"""
 
 import json
+import os
 from langchain_core.tools import tool
+
+_ACCOUNTS_CACHE = None
+
+
+def _load_accounts() -> dict:
+    global _ACCOUNTS_CACHE
+    if _ACCOUNTS_CACHE is None:
+        path = os.path.join(
+            os.path.dirname(__file__), "../../data/accounts.json"
+        )
+        with open(path, encoding="utf-8") as f:
+            _ACCOUNTS_CACHE = json.load(f)
+    return _ACCOUNTS_CACHE
 
 
 @tool
@@ -19,47 +29,15 @@ def lookup_account(user_id: str) -> str:
     Args:
         user_id: 玩家 UID（用户提供的数字即为UID，如"221"、"id12345"）
     """
-    try:
-        last_digit = int(user_id[-1])
-    except (ValueError, IndexError):
-        last_digit = 9
+    accounts = _load_accounts()
+    record = accounts.get(user_id)
 
-    if last_digit == 1:
-        result = {
-            "_health": {"ok": True, "confidence": 0.9, "message": None},
-            "uid": user_id,
-            "status": "normal",
-            "ban_reason": None,
-            "recharge_total": 1280.0,
-            "last_login": "2026-05-08T20:15:00Z",
-        }
-    elif last_digit == 2:
-        result = {
-            "_health": {"ok": True, "confidence": 0.9, "message": None},
-            "uid": user_id,
-            "status": "banned",
-            "ban_reason": "违反用户协议第3.2条：使用外挂程序",
-            "recharge_total": 328.0,
-            "last_login": "2026-04-10T18:23:00Z",
-        }
-    elif last_digit == 3:
-        result = {
-            "_health": {"ok": True, "confidence": 0.9, "message": None},
-            "uid": user_id,
-            "status": "recharge_abnormal",
-            "ban_reason": None,
-            "recharge_total": 5000.0,
-            "last_login": "2026-05-20T14:30:00Z",
-            "abnormal_detail": "近期充值出现异常,充值未到账",
-        }
-    else:
-        result = {
-            "_health": {"ok": True, "confidence": 0.9, "message": None},
-            "uid": user_id,
-            "status": "normal",
-            "ban_reason": None,
-            "recharge_total": 1280.0,
-            "last_login": "2026-05-08T20:15:00Z",
-        }
+    if record is None:
+        return json.dumps({
+            "_health": {"ok": False, "confidence": 0.0, "message": f"未找到 UID {user_id} 的账号信息"},
+        }, ensure_ascii=False)
 
-    return json.dumps(result, ensure_ascii=False)
+    return json.dumps({
+        "_health": {"ok": True, "confidence": 0.9, "message": None},
+        **record,
+    }, ensure_ascii=False)

@@ -125,6 +125,7 @@ async def human_node(state: AgentState) -> Dict[str, Any]:
         "human_review": human_result,
         "final_response": review_result["final_response"],
         "messages": [],
+        "node_trace": ["human"],
         "metadata": {
             **state.get("metadata", {}),
             "human_review_applied": True,

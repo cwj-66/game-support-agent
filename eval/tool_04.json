@@ -1,0 +1,16 @@
+[
+  {
+    "id": "tool_04",
+    "category": "multi_tool",
+    "subcategory": "ticket_check_and_escalate",
+    "scenario": "查工单进度后催单——顺序关键：先check_ticket查状态，再escalate_to_human催单",
+    "user_id": "10004",
+    "question": "我提了个bug反馈工单，处理得怎么样了？还没好的话帮我催一下",
+    "ground_truth": "先调用check_ticket(user_id=\"10004\")查到TK-20260530-2864状态为processing，告知用户当前进度。因用户明确要求催单，询问确认后调用escalate_to_human转人工客服，reason中须包含工单号TK-20260530-2864。",
+    "expected_tool_sequence": [
+      {"name": "check_ticket", "args": {"user_id": "10004"}},
+      {"name": "escalate_to_human", "args": {"reason": "must_contain_ticket_id"}}
+    ],
+    "keywords": ["10004", "TK-20260530-2864", "催", "转人工"]
+  }
+]

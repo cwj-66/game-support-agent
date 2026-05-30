@@ -1,0 +1,17 @@
+[
+  {
+    "id": "rag_01",
+    "category": "retrieval_exact",
+    "user_id": "10001",
+    "question": "成就「Anyone can be a gourmet」需要制作多少次可疑料理才能完成？胡桃那种自动产出的算不算？",
+    "ground_truth": "需要失败烹饪小游戏并产出可疑品质的料理10次。胡桃的「来托生!」和神里绫人的「神里流·日常烹饪」这类自动产出可疑料理的天赋不计数，只有手动失败烹饪小游戏产出的才计入。",
+    "keywords": [
+      "Anyone can be a gourmet",
+      "Suspicious",
+      "10",
+      "cooking",
+      "Wonders of the World",
+      "Hu Tao"
+    ]
+  }
+]

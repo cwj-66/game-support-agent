@@ -1,0 +1,17 @@
+[
+  {
+    "id": "rag_05",
+    "category": "retrieval_semantic",
+    "user_id": "10001",
+    "question": "这个叫「祂从未死去」的世界BOSS，它的大招是什么机制？怎么打断？",
+    "ground_truth": "终极技能名为「Giant Undying Collision」（巨力不灭冲撞）。Boss会蓄力8秒，期间全抗性提升310%，钝击攻击造成5倍削韧伤害。累计造成2500点削韧伤害即可打断蓄力并使Boss瘫痪；若未能打断，Boss会冲刺3次，每次造成300%攻击力的物理伤害。",
+    "keywords": [
+      "He Never Dies",
+      "Ultimate Technique",
+      "Giant Undying Collision",
+      "poise",
+      "2500",
+      "瘫痪"
+    ]
+  }
+]

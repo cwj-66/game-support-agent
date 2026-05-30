@@ -30,4 +30,5 @@ async def finish_node(state: AgentState) -> Dict[str, Any]:
             "completed": True,
             "finished_at": datetime.now(timezone.utc).isoformat(),
         },
+        "node_trace": ["finish"],
     }

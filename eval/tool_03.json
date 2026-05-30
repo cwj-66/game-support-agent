@@ -1,0 +1,15 @@
+[
+  {
+    "id": "tool_03",
+    "category": "single_tool",
+    "subcategory": "ticket_lookup_by_id",
+    "scenario": "用户提供完整工单号查询工单进度",
+    "user_id": "10015",
+    "question": "我之前提了个工单TK-20260530-7394，帮我看看处理到哪了",
+    "ground_truth": "查询工单TK-20260530-7394，告知用户该工单为BUG反馈，当前状态为处理中（processing），优先级P1，预计处理时间5-7个工作日。",
+    "expected_tool_sequence": [
+      {"name": "check_ticket", "args": {"ticket_id": "TK-20260530-7394"}}
+    ],
+    "keywords": ["TK-20260530-7394", "bug", "处理中", "processing"]
+  }
+]

@@ -34,5 +34,6 @@ async def detector_node(state: AgentState) -> Dict[str, Any]:
             "sensitive_words": decision.sensitive_words,
             "pending_content": final_response,
             "source": "detector",
-        } if decision.should_interrupt else None
+        } if decision.should_interrupt else None,
+        "node_trace": ["detector"],
     }

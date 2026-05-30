@@ -166,6 +166,9 @@ async def run_agent(
     g = await get_graph()
     result = await g.ainvoke(initial_state, config)
 
+    # 提取节点执行路径
+    node_trace = result.get("node_trace", [])
+
     # LangGraph interrupt() 在某些版本中不抛异常，而是正常返回带 __interrupt__ 的结果
     raw_interrupt = result.get("__interrupt__")
     interrupt_payload = None
@@ -190,6 +193,7 @@ async def run_agent(
         "interrupt_info": result.get("interrupt_info"),
         "has_interrupt": raw_interrupt is not None,
         "__interrupt__": interrupt_payload,
+        "node_trace": node_trace,
     }
 
 

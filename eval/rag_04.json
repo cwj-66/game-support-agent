@@ -1,0 +1,15 @@
+[
+  {
+    "id": "rag_04",
+    "category": "retrieval_semantic",
+    "user_id": "10001",
+    "question": "本地传奇Cocijo的第二阶段成就怎么完成？",
+    "ground_truth": "Cocijo的第二阶成就（Tier 2）要求玩家在Cocijo形成雷荆棘护盾（Thunderthorn Shield）之前将其击败。",
+    "keywords": [
+      "Cocijo",
+      "Thunderthorn Shield",
+      "Duelist: Series I",
+      "Local Legend"
+    ]
+  }
+]

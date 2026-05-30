@@ -1,11 +1,10 @@
 """
 工单创建工具
-通过 MCP 协议写入 SQLite 数据库，不再直接 import sqlite3
+直接使用 SQLite 持久化工单数据，不经过 MCP
 """
 
 import json
 import time
-import random
 from langchain_core.tools import tool
 
 
@@ -55,37 +54,21 @@ async def create_ticket(user_id: str, issue_type: str, description: str) -> str:
     }
     estimated = estimated_map.get(issue_type, "3-5 个工作日")
 
-    # 生成工单号（与 app.core.database 逻辑保持一致）
-    ticket_id = f"TK-{time.strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
-    now = time.strftime("%Y-%m-%dT%H:%M:%S")
-
-    # 通过 MCP 写入 SQLite
+    # 写入 SQLite
     try:
-        from agent.tools.mcp_client import mcp_write_query, _sqlesc
+        from app.core.database import create_ticket as db_create
 
-        await mcp_write_query(
-            f"INSERT INTO tickets "
-            f"(ticket_id, player_uid, title, description, priority, status, created_at) "
-            f"VALUES ("
-            f"'{_sqlesc(ticket_id)}', "
-            f"'{_sqlesc(user_id)}', "
-            f"'{_sqlesc(title)}', "
-            f"'{_sqlesc(description)}', "
-            f"'{_sqlesc(priority)}', "
-            f"'processing', "
-            f"'{_sqlesc(now)}')"
-        )
-    except Exception as e:
-        # MCP 不可用时降级为直接写 SQLite（通过 app.core.database）
-        print(f"[ticket] MCP unavailable, falling back to direct DB write: {e}")
-        from app.core.database import create_ticket
-        db_ticket = create_ticket(
+        db_ticket = db_create(
             player_uid=user_id,
             title=title,
             description=description,
             priority=priority,
         )
         ticket_id = db_ticket.ticket_id
+    except Exception as e:
+        # 数据库不可用时降级为内存生成
+        ticket_id = f"TK{int(time.time())}"
+        print(f"[ticket] DB unavailable, using fallback ID: {e}")
 
     result = {
         "_health": {"ok": True, "confidence": 0.95, "message": None},

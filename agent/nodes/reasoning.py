@@ -23,7 +23,7 @@ def _build_llm_from_settings() -> ChatOpenAI:
     - 其次使用 OpenAI：OPENAI_API_KEY
     """
     settings = get_settings()
-    model_name = settings.MODEL_NAME or "qwen-turbo"
+    model_name = settings.REASONING_MODEL_NAME or settings.MODEL_NAME or "qwen-turbo"
     base_url = settings.LLM_BASE_URL or "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     if settings.DASHSCOPE_API_KEY:
@@ -88,6 +88,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [AIMessage(content=content)],
             "metadata": metadata,
+            "node_trace": ["reasoning"],
         }
 
     system_prompt = GAME_SUPPORT_SYSTEM_PROMPT
@@ -99,8 +100,8 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
 
     llm_messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(content=user_query),
         *history,
+        HumanMessage(content=user_query),
     ]
 
     try:
@@ -121,4 +122,5 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     return {
         "messages": [response],
         "metadata": metadata,
+        "node_trace": ["reasoning"],
     }

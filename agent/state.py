@@ -3,6 +3,7 @@ AgentState 定义
 LangGraph图的状态结构，包含消息、中断标记、人工审核结果等
 """
 
+import operator
 from typing import TypedDict, Annotated, List, Optional, Dict, Any, Literal
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -91,6 +92,8 @@ class AgentState(TypedDict):
     ticket_id: Optional[str]
     # 运行时元数据，各节点以读-改-写模式往里塞东西，同一个 key 后来者覆盖前者
     metadata: Dict[str, Any]
+    # 节点执行路径追踪，每个节点进入时 append 自己的名字，按执行顺序记录
+    node_trace: Annotated[List[str], operator.add]
 
 # 创建对话初始状态
 def create_initial_state(
@@ -123,6 +126,7 @@ def create_initial_state(
         "human_review": None,
         "tool_calls": [],
         "final_response": None,
+        "node_trace": [],
         "metadata": metadata or {
             "created_at": datetime.now(timezone.utc).isoformat(),
             "version": "1.0.0"

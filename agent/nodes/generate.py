@@ -10,6 +10,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from ..state import AgentState
 from ..prompts.system import CUSTOMER_SERVICE_PROMPT
 from app.core.llm import get_chat_model
+from app.core.config import get_settings
 
 
 async def generate_response_node(state: AgentState) -> Dict[str, Any]:
@@ -27,12 +28,13 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
         final_response = human_review.get("modified_content", "[人工处理完成]")
 
     elif messages:
-        llm = get_chat_model()
+        settings = get_settings()
+        llm = get_chat_model(model_name=settings.GENERATE_MODEL_NAME)
 
         ai_result = await llm.ainvoke([
             SystemMessage(content=CUSTOMER_SERVICE_PROMPT),
-            HumanMessage(content=user_query),
             *messages,
+            HumanMessage(content=user_query),
         ])
         final_response = ai_result.content
 
@@ -56,4 +58,5 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
         "messages": [ai_message],
         "final_response": final_response,
         "metadata": metadata,
+        "node_trace": ["generate"],
     }

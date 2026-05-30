@@ -1,0 +1,28 @@
+[
+  {
+    "id": "mc_04",
+    "category": "multi_context",
+    "subcategory": "stance_change_dispute",
+    "scenario": "用户先查询账号状态确认'没问题'，随后改变立场质疑数据准确性并投诉，验证Agent能应对用户立场转变",
+    "user_id": "10004",
+    "turns": [
+      {
+        "step": 1,
+        "question": "帮我查一下我的充值情况",
+        "ground_truth": "充值总额为648元（UID 10004）。",
+        "expected_tool_sequence": [
+          {"name": "lookup_account", "args": {"user_id": "10004"}}
+        ],
+        "keywords": ["10004", "648", "正常"]
+      },
+      {
+        "step": 2,
+        "question": "不对吧？我明明充了月卡和大月卡好几个月，应该远远不止648，你们系统是不是搞错了？我要投诉！",
+        "ground_truth": "用户改变了立场，从接受信息变为质疑数据准确性。应耐心解释查询结果来自系统记录，月卡（30元）和大月卡（68元）的累计以实际支付为准。如果用户坚持有误，可为用户创建投诉工单。",
+        "expected_tool_sequence": [],
+        "expected_no_tools": true,
+        "keywords": ["充值", "记录", "月卡", "大月卡", "648"]
+      }
+    ]
+  }
+]

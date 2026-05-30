@@ -1,0 +1,16 @@
+[
+  {
+    "id": "hil_02",
+    "category": "human_in_loop",
+    "subcategory": "llm_escalate_payment_dispute",
+    "scenario": "用户充值未到账且强烈要求转人工，验证LLM在充值纠纷场景下主动升等",
+    "user_id": "10003",
+    "question": "我账号刚充了648元但没到账！这已经是第三次了，我要找人工客服投诉！马上给我转人工！",
+    "ground_truth": "安抚用户情绪，查询用户（UID 10003）充值状态（充值异常、充值未到账）后转接人工客服处理充值未到账问题。",
+    "expected_tool_sequence": [
+      {"name": "escalate_to_human", "args": {}}
+    ],
+    "must_escalate": true,
+    "keywords": ["人工", "充值", "未到账", "投诉", "10003"]
+  }
+]

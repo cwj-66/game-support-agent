@@ -1,0 +1,22 @@
+{
+  "10001": {"uid": "10001", "status": "normal", "ban_reason": null, "recharge_total": 1280.0, "last_login": "2026-05-08T20:15:00Z"},
+  "10002": {"uid": "10002", "status": "banned", "ban_reason": "使用外挂程序，违反用户协议第3.2条", "recharge_total": 328.0, "last_login": "2026-04-10T18:23:00Z"},
+  "10003": {"uid": "10003", "status": "recharge_abnormal", "ban_reason": null, "recharge_total": 5000.0, "last_login": "2026-05-20T14:30:00Z", "abnormal_detail": "近期充值出现异常，充值未到账"},
+  "10004": {"uid": "10004", "status": "normal", "ban_reason": null, "recharge_total": 648.0, "last_login": "2026-05-25T10:00:00Z"},
+  "10005": {"uid": "10005", "status": "banned", "ban_reason": "恶意退款，违反用户协议第5.1条", "recharge_total": 0.0, "last_login": "2026-03-15T09:00:00Z"},
+  "10006": {"uid": "10006", "status": "normal", "ban_reason": null, "recharge_total": 2560.0, "last_login": "2026-05-28T22:10:00Z"},
+  "10007": {"uid": "10007", "status": "normal", "ban_reason": null, "recharge_total": 30.0, "last_login": "2026-05-01T12:30:00Z"},
+  "10008": {"uid": "10008", "status": "banned", "ban_reason": "发布违规言论，违反用户协议第7.5条", "recharge_total": 128.0, "last_login": "2026-02-20T16:45:00Z"},
+  "10009": {"uid": "10009", "status": "recharge_abnormal", "ban_reason": null, "recharge_total": 9999.0, "last_login": "2026-05-29T08:00:00Z", "abnormal_detail": "单笔充值金额超过上限，触发风控"},
+  "10010": {"uid": "10010", "status": "normal", "ban_reason": null, "recharge_total": 0.0, "last_login": "2026-05-28T19:00:00Z"},
+  "10011": {"uid": "10011", "status": "normal", "ban_reason": null, "recharge_total": 198.0, "last_login": "2026-05-27T15:20:00Z"},
+  "10012": {"uid": "10012", "status": "banned", "ban_reason": "账号被盗后用于发布广告，临时封禁", "recharge_total": 648.0, "last_login": "2026-04-01T11:00:00Z"},
+  "10013": {"uid": "10013", "status": "normal", "ban_reason": null, "recharge_total": 5200.0, "last_login": "2026-05-29T07:30:00Z"},
+  "10014": {"uid": "10014", "status": "recharge_abnormal", "ban_reason": null, "recharge_total": 300.0, "last_login": "2026-05-22T18:00:00Z", "abnormal_detail": "支付渠道返回异常，订单待核实"},
+  "10015": {"uid": "10015", "status": "normal", "ban_reason": null, "recharge_total": 128.0, "last_login": "2026-05-15T09:45:00Z"},
+  "10016": {"uid": "10016", "status": "banned", "ban_reason": "多次恶意举报其他玩家，违反用户协议第4.6条", "recharge_total": 2000.0, "last_login": "2026-03-28T14:00:00Z"},
+  "10017": {"uid": "10017", "status": "normal", "ban_reason": null, "recharge_total": 888.0, "last_login": "2026-05-26T20:00:00Z"},
+  "10018": {"uid": "10018", "status": "normal", "ban_reason": null, "recharge_total": 45.0, "last_login": "2026-05-10T16:30:00Z"},
+  "10019": {"uid": "10019", "status": "banned", "ban_reason": "使用非法第三方代充，违反用户协议第3.5条", "recharge_total": 5000.0, "last_login": "2026-01-05T10:00:00Z"},
+  "10020": {"uid": "10020", "status": "normal", "ban_reason": null, "recharge_total": 10000.0, "last_login": "2026-05-29T06:00:00Z"}
+}
