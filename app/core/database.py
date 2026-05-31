@@ -73,10 +73,16 @@ def init_db():
                 reviewer_id TEXT,
                 interrupt_reason TEXT,
                 session_id TEXT,
+                tool_context TEXT,
                 created_at TEXT NOT NULL,
                 resolved_at TEXT
             )
         """)
+        # 迁移：新增 tool_context 列（兼容已有数据库）
+        try:
+            conn.execute("ALTER TABLE tickets ADD COLUMN tool_context TEXT")
+        except Exception:
+            pass
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)
         """)
@@ -165,12 +171,14 @@ def list_tickets(
 def update_ticket(
     ticket_id: str,
     status: Optional[str] = None,
+    priority: Optional[str] = None,
     category: Optional[str] = None,
     agent_reply: Optional[str] = None,
     human_reviewed: Optional[bool] = None,
     human_action: Optional[str] = None,
     reviewer_id: Optional[str] = None,
     interrupt_reason: Optional[str] = None,
+    tool_context: Optional[str] = None,
 ) -> Optional[Ticket]:
     """更新工单字段，只更新传入的非 None 字段"""
     sets = []
@@ -182,6 +190,9 @@ def update_ticket(
         if status == "resolved":
             sets.append("resolved_at = ?")
             params.append(time.strftime("%Y-%m-%dT%H:%M:%S"))
+    if priority is not None:
+        sets.append("priority = ?")
+        params.append(priority)
     if category is not None:
         sets.append("category = ?")
         params.append(category)
@@ -200,6 +211,9 @@ def update_ticket(
     if interrupt_reason is not None:
         sets.append("interrupt_reason = ?")
         params.append(interrupt_reason)
+    if tool_context is not None:
+        sets.append("tool_context = ?")
+        params.append(tool_context)
 
     if not sets:
         return get_ticket(ticket_id)
@@ -281,6 +295,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         human_action=row["human_action"],
         reviewer_id=row["reviewer_id"],
         interrupt_reason=row["interrupt_reason"],
+        tool_context=row["tool_context"],
         session_id=row["session_id"],
         created_at=row["created_at"],
         resolved_at=row["resolved_at"],

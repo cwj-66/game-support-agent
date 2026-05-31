@@ -41,6 +41,7 @@ class Ticket(BaseModel):
     human_action: Optional[str] = Field(default=None, description="人工审核操作 APPROVE/MODIFY/OVERRIDE")
     reviewer_id: Optional[str] = None
     interrupt_reason: Optional[str] = Field(default=None, description="触发人工审核原因")
+    tool_context: Optional[str] = Field(default=None, description="工具调用上下文（JSON）")
     session_id: Optional[str] = Field(default=None, description="关联的Agent会话ID")
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     resolved_at: Optional[str] = None

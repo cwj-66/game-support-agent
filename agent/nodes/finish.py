@@ -29,7 +29,14 @@ async def finish_node(state: AgentState) -> Dict[str, Any]:
     metadata["completed"] = True
     metadata["finished_at"] = datetime.now(timezone.utc).isoformat()
 
-    return {
+    result: Dict[str, Any] = {
         "metadata": metadata,
         "node_trace": ["finish"],
     }
+
+    # 如果存在 human_reply（人工输入），将其作为最终回复
+    human_reply = state.get("human_reply")
+    if human_reply:
+        result["final_response"] = human_reply
+
+    return result

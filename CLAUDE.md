@@ -33,7 +33,7 @@ game-support-agent/
 │   │   ├── query_knowledge.py        # KnowledgeTool（HTTP 直接调用 RAG 知识库）
 │   │   ├── rag_client.py            # RAG HTTP 客户端（直接调 enterprise-rag）
 │   │   ├── escalate.py             # 转人工工具 + EscalateDetector 升等检测（两路触发）
-│   │   ├── account.py              # lookup_account（查询账号状态）
+│   │   ├── account.py              # lookup_account(fields=None)（查询账号状态，按需取字段）
 │   │   └── ticket.py               # create_ticket（创建工单）
 │   └── prompts/
 │       └── system.py               # 系统提示词（决策 + 客服润色）

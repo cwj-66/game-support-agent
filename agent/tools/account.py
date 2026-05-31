@@ -6,6 +6,13 @@ from langchain_core.tools import tool
 
 _ACCOUNTS_CACHE = None
 
+# 可查询的分类，每种对应一组字段
+_FIELD_GROUPS = {
+    "status":  ["status", "ban_reason"],
+    "recharge": ["recharge_total", "abnormal_detail"],
+    "login":   ["last_login"],
+}
+
 
 def _load_accounts() -> dict:
     global _ACCOUNTS_CACHE
@@ -24,25 +31,49 @@ def create_lookup_account(uid: str):
     Args:
         uid: 当前玩家 UID，由系统传入，不暴露给 LLM
     """
-    @tool
-    def lookup_account() -> str:
-        """查询当前玩家账号状态，包括封禁情况和充值记录。
+    def _parse_fields(raw: str) -> list[str]:
+        """兼容 LLM 传 '["status","login"]' 和 "status,login" 两种格式"""
+        raw = raw.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                pass
+        return [g.strip() for g in raw.split(",") if g.strip()]
 
-        当玩家询问自己的账号状态、是否被封禁、充值记录时调用此工具。
+
+    @tool
+    def lookup_account(fields: str = "") -> str:
+        """查询当前玩家账号状态。按需传入 fields 只取需要的分类，不要获取不需要的分类。
+
         只能查询当前玩家自己的账号，无法查询其他玩家的信息。
 
+        Args:
+            fields: 需要返回的分类，逗号分隔，例如 "status,recharge"。可用值: status（封禁状态）, recharge（充值记录）, login（登录信息）。不传时返回全部。
         """
         accounts = _load_accounts()
         record = accounts.get(uid)
 
         if record is None:
-            return json.dumps({
-                "_health": {"ok": False, "confidence": 0.0, "message": f"未找到 UID {uid} 的账号信息"},
-            }, ensure_ascii=False)
+            return json.dumps({"status": "unknown", "ban_reason": None}, ensure_ascii=False)
 
-        return json.dumps({
-            "_health": {"ok": True, "confidence": 0.9, "message": None},
-            **record,
-        }, ensure_ascii=False)
+        groups = _parse_fields(fields)
+        if groups:
+            result = {}
+            for group in groups:
+                for f in _FIELD_GROUPS.get(group.strip(), []):
+                    if f in record:
+                        result[f] = record[f]
+            return json.dumps(result, ensure_ascii=False)
+
+        # 不传 fields 时返回全部
+        result = {}
+        for group_fields in _FIELD_GROUPS.values():
+            for f in group_fields:
+                if f in record:
+                    result[f] = record[f]
+        return json.dumps(result, ensure_ascii=False)
 
     return lookup_account

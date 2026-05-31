@@ -15,7 +15,7 @@ from typing import Dict, Any, List
 from langchain_core.messages import AIMessage, ToolMessage
 
 from ..state import AgentState
-from ..tools import get_all_tools
+from ..tools import get_all_tools, simplify_tool_context
 from ..tools.escalate import get_default_escalate_detector
 
 
@@ -122,7 +122,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                 except (json.JSONDecodeError, ValueError):
                     pass
 
-            # create_ticket：提取工单号，供后续节点回写状态
+            # create_ticket：提取工单号，并附上工具调用上下文
             if tool_name == "create_ticket":
                 try:
                     data = json.loads(result_str)
@@ -131,6 +131,22 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                     ticket_id_from_tool = None
                 if ticket_id_from_tool:
                     _new_ticket_id = ticket_id_from_tool
+                    # 收集本轮及之前的工具调用记录（排除 create_ticket 自身）
+                    context_records = [
+                        r for r in state.get("tool_calls", [])
+                        if r.get("tool") != "create_ticket"
+                    ]
+                    for r in tool_call_records:
+                        if r.get("tool") != "create_ticket":
+                            context_records.append(r)
+                    try:
+                        from app.core.database import update_ticket
+                        update_ticket(
+                            ticket_id_from_tool,
+                            tool_context=json.dumps(simplify_tool_context(context_records), ensure_ascii=False),
+                        )
+                    except Exception:
+                        pass
 
             # escalate_to_human：LLM 主动升等，直接设 interrupt_info
             if tool_name == "escalate_to_human":
@@ -186,10 +202,13 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                 # 仅超限无失败 → 自动建工单 + 优雅降级（仅首次，防重复）
                 try:
                     from app.core.database import create_ticket as db_create
+                    user_query = state.get("user_query", "")
+                    desc = f"用户问题：{user_query}" if user_query else ""
+                    desc += f"\nAgent 多次尝试后仍无法回答。原因：{decision.reason}"
                     ticket = db_create(
                         player_uid=state.get("user_id", "unknown"),
                         title="ReAct 超限自动工单",
-                        description=f"Agent 多次尝试后仍无法回答用户问题。原因：{decision.reason}",
+                        description=desc.strip(),
                         priority="P2",
                         session_id=state.get("session_id"),
                     )

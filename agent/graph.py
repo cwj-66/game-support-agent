@@ -15,18 +15,18 @@ from .nodes import (
     detector_node,
     finish_node,
     human_node,
-    escalate_to_human_node,
+    human_handoff_node,
 )
 from .checkpointer import get_checkpointer
 
 
 # ============ 路由函数 ============
 
-async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "generate", "escalate_to_human"]:
+async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "generate", "human_handoff"]:
     """
     reasoning 节点路由
     - 最后一条 AIMessage 含 tool_calls → tool_exec
-    - 无 tool_calls 且 human_requested=True → escalate_to_human（系统层升等）
+    - 无 tool_calls 且 human_requested=True → human_handoff（系统层转人工）
     - 其余 → generate
     """
     from langchain_core.messages import AIMessage
@@ -37,9 +37,9 @@ async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "gener
             if getattr(msg, "tool_calls", None):
                 return "tool_exec"
             break
-    # LLM 决策结束但用户要求转人工 → 系统层拦截升等
+    # LLM 决策结束但用户要求转人工 → 系统层拦截转人工
     if state.get("human_requested"):
-        return "escalate_to_human"
+        return "human_handoff"
     return "generate"
 
 
@@ -53,14 +53,14 @@ workflow.add_node("detector", detector_node)
 workflow.add_node("generate", generate_response_node)
 workflow.add_node("human", human_node)
 workflow.add_node("finish", finish_node)
-workflow.add_node("escalate_to_human", escalate_to_human_node)
+workflow.add_node("human_handoff", human_handoff_node)
 
 workflow.set_entry_point("reasoning")
 
 workflow.add_conditional_edges(
     "reasoning",
     route_from_reasoning,
-    {"tool_exec": "tool_exec", "generate": "generate", "escalate_to_human": "escalate_to_human"},
+    {"tool_exec": "tool_exec", "generate": "generate", "human_handoff": "human_handoff"},
 )
 
 workflow.add_edge("tool_exec", "reasoning")
@@ -69,8 +69,8 @@ workflow.add_edge("generate", "detector")
 
 workflow.add_edge("detector", "finish")
 
-workflow.add_edge("human", "generate")
-workflow.add_edge("escalate_to_human", "human")
+workflow.add_edge("human", "finish")
+workflow.add_edge("human_handoff", "human")
 workflow.add_edge("finish", END)
 
 # 编译后的图（懒加载，因为 checkpointer 初始化需要异步）

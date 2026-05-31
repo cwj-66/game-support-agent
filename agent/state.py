@@ -84,6 +84,8 @@ class AgentState(TypedDict):
     interrupt_info: Optional[InterruptInfo]
     # 人工审核结果，human_node 从 interrupt() 获取并写入，generate_response_node 读取
     human_review: Optional[HumanReviewResult]
+    # 人工回复内容（简化版），human_node 写入，finish_node 读取为最终回复
+    human_reply: Optional[str]
     # 全部轮次的工具调用审计记录，tool_exec_node 每轮追加（非覆盖）
     tool_calls: List[Dict[str, Any]]
     # 最终回复，generate_response_node 生成，可能是 LLM 写的也可能是人工覆盖的
@@ -126,6 +128,7 @@ def create_initial_state(
         "ticket_id": ticket_id,
         "interrupt_info": None,
         "human_review": None,
+        "human_reply": None,
         "tool_calls": [],
         "final_response": None,
         "human_requested": False,

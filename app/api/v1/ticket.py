@@ -2,11 +2,26 @@
 工单 API 端点
 工单创建、查询、统计
 """
+import json
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from app.models.ticket import TicketCreate, TicketUpdate, Ticket, TicketListResponse, TicketStats
 from app.core.database import create_ticket, get_ticket, list_tickets, update_ticket, get_ticket_stats
+from agent.tools import simplify_tool_context
+
+
+def _simplify_ticket_tool_context(ticket: Ticket) -> Ticket:
+    """精简工单的 tool_context 字段"""
+    if not ticket.tool_context:
+        return ticket
+    try:
+        records = json.loads(ticket.tool_context)
+        simplified = simplify_tool_context(records)
+        ticket.tool_context = json.dumps(simplified, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return ticket
 
 router = APIRouter()
 
@@ -20,7 +35,7 @@ async def create_new_ticket(body: TicketCreate):
         description=body.description,
         priority=body.priority,
     )
-    return ticket
+    return _simplify_ticket_tool_context(ticket)
 
 
 @router.post("/ticket/submit", response_model=dict, summary="提交工单并触发Agent处理")
@@ -92,6 +107,7 @@ async def list_all_tickets(
         page=page,
         page_size=page_size,
     )
+    tickets = [_simplify_ticket_tool_context(t) for t in tickets]
     return TicketListResponse(
         tickets=tickets,
         total=total,
@@ -112,7 +128,7 @@ async def get_ticket_detail(ticket_id: str):
     ticket = get_ticket(ticket_id)
     if ticket is None:
         raise HTTPException(status_code=404, detail=f"工单 {ticket_id} 不存在")
-    return ticket
+    return _simplify_ticket_tool_context(ticket)
 
 
 @router.patch("/ticket/{ticket_id}", response_model=Ticket, summary="更新工单（客服处理）")
@@ -131,4 +147,4 @@ async def update_ticket_detail(ticket_id: str, body: TicketUpdate):
     )
     if updated is None:
         raise HTTPException(status_code=500, detail="更新工单失败")
-    return updated
+    return _simplify_ticket_tool_context(updated)

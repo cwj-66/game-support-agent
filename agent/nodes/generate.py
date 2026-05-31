@@ -19,15 +19,10 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
 
     结合用户问题和完整对话历史，用客服提示词生成最终回复
     """
-    human_review = state.get("human_review")
-    user_query = state.get("user_query", "")
     messages = state.get("messages", [])
+    user_query = state.get("user_query", "")
 
-    # 人工干预优先：OVERRIDE 或 MODIFY 直接使用人工内容
-    if human_review and human_review.get("action") in ["OVERRIDE", "MODIFY"]:
-        final_response = human_review.get("modified_content", "[人工处理完成]")
-
-    elif messages:
+    if messages:
         settings = get_settings()
         llm = get_chat_model(model_name=settings.GENERATE_MODEL_NAME)
 

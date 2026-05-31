@@ -79,7 +79,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
 
     LLM 收到用户问题后可以：
     - 调用 query_knowledge 查询游戏知识库
-    - 调用 lookup_account 查询玩家账号状态
+    - 调用 lookup_account 查询玩家账号状态（按需传 fields 参数）
     - 调用 create_ticket 创建客服工单
     - 调用 escalate_to_human 主动触发人工审核
     - 直接输出回答（不调用任何工具）
@@ -144,7 +144,12 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
             "node_trace": ["reasoning"],
         }
 
-    llm_with_tools = llm.bind_tools(get_all_tools(user_id))
+    # human_requested 时只暴露查询类工具，禁止创建工单和转人工
+    allowed_tools = get_all_tools(user_id)
+    if human_requested:
+        allowed_names = {"query_knowledge", "lookup_account"}
+        allowed_tools = [t for t in allowed_tools if t.name in allowed_names]
+    llm_with_tools = llm.bind_tools(allowed_tools)
 
     try:
         response: AIMessage = await llm_with_tools.ainvoke(llm_messages)

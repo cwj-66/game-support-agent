@@ -5,8 +5,8 @@ Agent 节点模块
 - reasoning: LLM自主决策（ReAct 风格）
 - tool_exec: 通用工具执行分发器
 - generate: 客服回复生成
-- detector: 中断检测（敏感词 + 工具失败）
-- human: 人工审核挂起与恢复
+- detector: 安全检测
+- human: 人工审核挂起与恢复（升等工单处理入口）
 - finish: 对话摘要及结束
 """
 
@@ -16,7 +16,7 @@ from .generate import generate_response_node
 from .detector import detector_node
 from .finish import finish_node
 from .human_node import human_node
-from .escalate_node import escalate_to_human_node
+from .escalate_node import human_handoff_node
 
 __all__ = [
     "reasoning_node",
@@ -25,5 +25,5 @@ __all__ = [
     "detector_node",
     "finish_node",
     "human_node",
-    "escalate_to_human_node",
+    "human_handoff_node",
 ]

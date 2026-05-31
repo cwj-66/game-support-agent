@@ -8,10 +8,10 @@ from typing import Optional
 
 from fastapi import APIRouter, Path
 from langgraph.types import Command
+from pydantic import BaseModel, Field
 
 from app.core.exceptions import (
     HumanReviewNotPendingException,
-    ValidationException
 )
 from app.core.pending_store import (
     get_all_pending,
@@ -19,14 +19,12 @@ from app.core.pending_store import (
     get_pending,
 )
 from app.models.review import (
-    ReviewAction,
     ReviewResponse,
     PendingReviewsResponse,
     ReviewTask,
     ReviewHistoryResponse,
 )
 from agent.graph import get_graph
-from agent.state import HumanReviewResult
 
 
 router = APIRouter(prefix="/human", tags=["人工审核"])
@@ -74,22 +72,23 @@ async def list_pending_reviews() -> PendingReviewsResponse:
     return PendingReviewsResponse(total=len(tasks), items=tasks)
 
 
+class HumanReplyRequest(BaseModel):
+    """人工审核回复请求：简化版，审核员直接输入回复内容"""
+    reply: str = Field(..., description="人工回复内容")
+    reviewer_id: str = Field(..., description="审核员标识")
+
+
 @router.post("/review/{session_id}", response_model=ReviewResponse)
 async def submit_review(
     session_id: str,
-    action: ReviewAction,
+    body: HumanReplyRequest,
 ) -> ReviewResponse:
     """
-    提交人工审核操作
-
-    三种操作类型：
-    - APPROVE: 原样通过Agent的回复
-    - MODIFY: 修改后通过
-    - OVERRIDE: 人工完全重写回复
+    提交人工审核结果
 
     流程：
     1. 验证 session 处于挂起状态
-    2. 调用 graph.ainvoke(Command(resume=...)) 恢复图执行
+    2. 将审核员的回复字符串传给 graph.ainvoke(Command(resume=...))
     3. 从公告板移除该会话
     4. 返回最终结果
     """
@@ -97,39 +96,24 @@ async def submit_review(
     if not get_pending(session_id):
         raise HumanReviewNotPendingException(session_id)
 
-    # MODIFY / OVERRIDE 必须提供修改内容
-    if action.action in ("MODIFY", "OVERRIDE") and not action.modified_content:
-        raise ValidationException(
-            "MODIFY 和 OVERRIDE 操作必须提供 modified_content",
-            field="modified_content",
-        )
-
-    # 构建恢复数据 —— 必须与 HumanReviewResult 字段一致
-    resume_data: HumanReviewResult = {
-        "action": action.action,
-        "reviewer_id": action.reviewer_id,
-        "modified_content": action.modified_content,
-        "notes": action.notes,
-    }
-
     # 恢复图执行，human_node 从 interrupt() 处继续运行
     g = await get_graph()
     result = await g.ainvoke(
-        Command(resume=resume_data),
+        Command(resume=body.reply),
         config=_graph_config(session_id),
     )
 
     # 审核完成，从公告板移除
     remove_pending(session_id)
 
-    final_response = result.get("final_response", "[人工处理完成]")
+    final_response = result.get("final_response", body.reply)
     processed_at = datetime.now(timezone.utc).isoformat()
 
     return ReviewResponse(
         success=True,
         review_id=f"rev_{session_id}",
         session_id=session_id,
-        action=action.action,
+        action="APPROVE",
         final_response=final_response,
         processed_at=processed_at,
     )
