@@ -44,7 +44,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     if not last_ai:
         return {"node_trace": ["tool_exec"]}
 
-    tools_map = {t.name: t for t in get_all_tools()}
+    tools_map = {t.name: t for t in get_all_tools(state.get("user_id", ""))}
     tool_messages: List[ToolMessage] = []
     tool_call_records: List[Dict[str, Any]] = []
     metadata = state.get("metadata", {})
@@ -81,6 +81,32 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                 tool_call_id=tool_call_id,
             ))
             tool_call_records.append(record)
+            continue
+
+        # 重复调用检测：相同 tool + 相同 args 已在之前执行过，跳过执行
+        is_duplicate = False
+        if tool_name in ("check_ticket", "lookup_account"):
+            for prev_call in state.get("tool_calls", []):
+                if prev_call.get("tool") == tool_name and prev_call.get("input") == tool_args:
+                    is_duplicate = True
+                    break
+
+        if is_duplicate:
+            result_str = json.dumps({
+                "status": "duplicate",
+                "message": f"已查询过相同内容，结果为最终状态，请勿重复查询。请直接回复用户。",
+                "do_not_retry": True,
+            }, ensure_ascii=False)
+            record["status"] = "completed"
+            record["output"] = result_str
+            record["duplicate"] = True
+            tool_messages.append(ToolMessage(
+                content=result_str,
+                name=tool_name,
+                tool_call_id=tool_call_id,
+            ))
+            tool_call_records.append(record)
+            metadata["tool_repeated_call"] = True
             continue
 
         try:

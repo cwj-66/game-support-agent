@@ -19,7 +19,7 @@ class InterruptInfo(TypedDict, total=False):
     中断信息结构
 
     由 tool_exec（escalate 两路）或 detector_node（安全兜底）写入，
-    供 human_node 读取做审核展示，route_from_tool_exec / route_from_detector 拿它做路由判断
+    供 human_node 读取做审核展示，route_from_reasoning / route_from_detector 拿它做路由判断
     """
     # 是否触发中断
     should_interrupt: bool
@@ -88,6 +88,8 @@ class AgentState(TypedDict):
     tool_calls: List[Dict[str, Any]]
     # 最终回复，generate_response_node 生成，可能是 LLM 写的也可能是人工覆盖的
     final_response: Optional[str]
+    # 用户是否明确要求转人工（关键词匹配，非 LLM 判断）
+    human_requested: bool
     # 关联的工单 ID（可选），从 API 层传入
     ticket_id: Optional[str]
     # 运行时元数据，各节点以读-改-写模式往里塞东西，同一个 key 后来者覆盖前者
@@ -126,6 +128,7 @@ def create_initial_state(
         "human_review": None,
         "tool_calls": [],
         "final_response": None,
+        "human_requested": False,
         "node_trace": [],
         "metadata": metadata or {
             "created_at": datetime.now(timezone.utc).isoformat(),

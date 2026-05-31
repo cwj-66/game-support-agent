@@ -51,6 +51,28 @@ def _build_llm_from_settings() -> ChatOpenAI:
     raise ValueError("未配置 LLM 密钥，请在 .env 设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
 
 
+def _detect_human_request(user_query: str, history: list) -> bool:
+    """关键词匹配检测用户是否明确要求转人工"""
+    import re
+
+    # 合并当前查询与上一轮用户消息（多轮对话场景）
+    combined = user_query
+    from langchain_core.messages import HumanMessage
+    for msg in reversed(history[-6:]):
+        if isinstance(msg, HumanMessage):
+            text = msg.content if isinstance(msg.content, str) else ""
+            combined = text + " " + combined
+            break
+
+    keywords = [
+        "人工", "客服", "真人", "转人工", "找人工",
+        "customer service", "human agent", "talk to a human",
+        "real person", "speak to a",
+    ]
+    pattern = "|".join(re.escape(k) for k in keywords)
+    return bool(re.search(pattern, combined, re.IGNORECASE))
+
+
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     """
     推理节点：LLM 绑定工具后自主决策（ReAct 风格）
@@ -68,6 +90,9 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     user_id = state.get("user_id", "")
     history = state.get("messages", [])
     metadata = state.get("metadata", {})
+
+    # 关键词检测：用户是否明确要求转人工
+    human_requested = _detect_human_request(user_query, history)
 
     # ReAct 超限兜底：直接输出优雅降级回复，不再调 LLM
     react_timeout = metadata.get("react_timeout")
@@ -88,6 +113,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [AIMessage(content=content)],
             "metadata": metadata,
+            "human_requested": human_requested,
             "node_trace": ["reasoning"],
         }
 
@@ -95,14 +121,30 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     if user_id:
         system_prompt += f"\n\n当前玩家 UID：{user_id}"
 
-    llm = _build_llm_from_settings()
-    llm_with_tools = llm.bind_tools(get_all_tools())
-
     llm_messages = [
         SystemMessage(content=system_prompt),
         *history,
         HumanMessage(content=user_query),
     ]
+
+    llm = _build_llm_from_settings()
+
+    # 重复工具调用 → 摘掉工具，强制生成最终回复
+    if metadata.get("tool_repeated_call"):
+        metadata.pop("tool_repeated_call", None)
+        try:
+            response: AIMessage = await llm.ainvoke(llm_messages)
+        except Exception as exc:
+            response = AIMessage(content=f"抱歉，处理您的请求时出现问题，建议联系人工客服。（错误：{exc}）")
+        has_tool_calls = False
+        return {
+            "messages": [response],
+            "metadata": metadata,
+            "human_requested": human_requested,
+            "node_trace": ["reasoning"],
+        }
+
+    llm_with_tools = llm.bind_tools(get_all_tools(user_id))
 
     try:
         response: AIMessage = await llm_with_tools.ainvoke(llm_messages)
@@ -122,5 +164,6 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     return {
         "messages": [response],
         "metadata": metadata,
+        "human_requested": human_requested,
         "node_trace": ["reasoning"],
     }

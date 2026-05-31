@@ -6,7 +6,8 @@
     "scenario": "查询不存在的工单号，验证工具返回不存在时的处理",
     "user_id": "10001",
     "question": "帮我看看工单TK-20260526-9999处理得怎么样了",
-    "ground_truth": "调用check_ticket查询TK-20260526-9999，工具返回工单不存在。如实告知用户该工单号不存在，建议核实工单号是否正确。",
+    "ground_truth": "查询工单TK-20260526-9999不存在。如实告知用户该工单号不存在，建议核实工单号是否正确。",
+    "llm_judge_context": "调用check_ticket查询后工具返回工单不存在",
     "expected_tool_sequence": [
       {"name": "check_ticket", "args": {"ticket_id": "TK-20260526-9999"}}
     ],

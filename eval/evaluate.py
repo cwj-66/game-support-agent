@@ -219,14 +219,20 @@ def score_forbidden(case: Dict, result: Dict) -> Tuple[float, str, bool]:
 # 4. LLM-as-Judge（内容评分）
 # ======================================================================
 
-def _build_judge_messages(actual_reply: str, ground_truth: str) -> List[Dict]:
+def _build_judge_messages(actual_reply: str, ground_truth: str, scenario_context: Optional[str] = None) -> List[Dict]:
     """构造 LLM Judge 的 messages"""
+    context_block = ""
+    if scenario_context:
+        context_block = f"""场景背景（仅供参考，不计入评分）:
+{scenario_context}
+
+"""
     prompt = f"""你是一个专业的游戏客服回复质量评估员。你的任务是将实际回复与标准答案对比，评估覆盖程度。
 
 实际回复:
 {actual_reply}
 
-标准答案（应包含的信息点）:
+{context_block}标准答案（应包含的信息点）:
 {ground_truth}
 
 请仔细对比，判断实际回复覆盖了标准答案中的哪些信息点，遗漏了哪些。
@@ -327,7 +333,7 @@ def _keyword_fallback(actual_reply: str, ground_truth: str) -> Dict:
     return {"covered": covered, "missing": missing, "score": round(score, 2)}
 
 
-async def llm_judge(actual_reply: str, ground_truth_text: str) -> Dict:
+async def llm_judge(actual_reply: str, ground_truth_text: str, scenario_context: Optional[str] = None) -> Dict:
     """
     调用 LLM 进行内容评估
     链路：DashScope/OpenAI 兼容接口 → 关键词兜底
@@ -335,7 +341,7 @@ async def llm_judge(actual_reply: str, ground_truth_text: str) -> Dict:
     if not actual_reply.strip():
         return {"covered": [], "missing": ["无回复内容可评估"], "score": 0.0}
 
-    messages = _build_judge_messages(actual_reply, ground_truth_text)
+    messages = _build_judge_messages(actual_reply, ground_truth_text, scenario_context)
 
     result = await _try_llm_judge(messages)
     if result is not None:
@@ -562,7 +568,7 @@ async def main():
                     if isinstance(msg, AIMessage) and msg.content:
                         actual_reply = msg.content
                         break
-            content_result = await llm_judge(actual_reply or "", _format_ground_truth(case.get("ground_truth", "")))
+            content_result = await llm_judge(actual_reply or "", _format_ground_truth(case.get("ground_truth", "")), case.get("llm_judge_context"))
 
         content_score = content_result.get("score", 0.0)
         covered = content_result.get("covered", [])

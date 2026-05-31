@@ -15,16 +15,18 @@ from .nodes import (
     detector_node,
     finish_node,
     human_node,
+    escalate_to_human_node,
 )
 from .checkpointer import get_checkpointer
 
 
 # ============ 路由函数 ============
 
-async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "generate"]:
+async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "generate", "escalate_to_human"]:
     """
     reasoning 节点路由
     - 最后一条 AIMessage 含 tool_calls → tool_exec
+    - 无 tool_calls 且 human_requested=True → escalate_to_human（系统层升等）
     - 其余 → generate
     """
     from langchain_core.messages import AIMessage
@@ -35,31 +37,10 @@ async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "gener
             if getattr(msg, "tool_calls", None):
                 return "tool_exec"
             break
+    # LLM 决策结束但用户要求转人工 → 系统层拦截升等
+    if state.get("human_requested"):
+        return "escalate_to_human"
     return "generate"
-
-
-async def route_from_tool_exec(state: AgentState) -> Literal["human", "reasoning"]:
-    """
-    tool_exec 节点路由
-    - escalate_to_human / auto_escalate → human
-    - 普通工具结果 → 回到 reasoning 继续决策
-    """
-    interrupt_info = state.get("interrupt_info")
-    if interrupt_info and interrupt_info.get("source") in ("llm_escalate", "auto_escalate"):
-        return "human"
-    return "reasoning"
-
-
-async def route_from_detector(state: AgentState) -> Literal["human", "finish"]:
-    """
-    detector 节点路由（generate 之后的兜底）
-    - 规则触发中断 → human
-    - 通过 → finish
-    """
-    interrupt_info = state.get("interrupt_info")
-    if interrupt_info and interrupt_info.get("should_interrupt", False):
-        return "human"
-    return "finish"
 
 
 # ============ 图构建（懒加载） ============
@@ -72,30 +53,24 @@ workflow.add_node("detector", detector_node)
 workflow.add_node("generate", generate_response_node)
 workflow.add_node("human", human_node)
 workflow.add_node("finish", finish_node)
+workflow.add_node("escalate_to_human", escalate_to_human_node)
 
 workflow.set_entry_point("reasoning")
 
 workflow.add_conditional_edges(
     "reasoning",
     route_from_reasoning,
-    {"tool_exec": "tool_exec", "generate": "generate"},
+    {"tool_exec": "tool_exec", "generate": "generate", "escalate_to_human": "escalate_to_human"},
 )
 
-workflow.add_conditional_edges(
-    "tool_exec",
-    route_from_tool_exec,
-    {"human": "human", "reasoning": "reasoning"},
-)
+workflow.add_edge("tool_exec", "reasoning")
 
 workflow.add_edge("generate", "detector")
 
-workflow.add_conditional_edges(
-    "detector",
-    route_from_detector,
-    {"human": "human", "finish": "finish"},
-)
+workflow.add_edge("detector", "finish")
 
 workflow.add_edge("human", "generate")
+workflow.add_edge("escalate_to_human", "human")
 workflow.add_edge("finish", END)
 
 # 编译后的图（懒加载，因为 checkpointer 初始化需要异步）

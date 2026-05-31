@@ -6,7 +6,8 @@
     "scenario": "用户查询封禁后创建申诉工单，属于后台异步处理场景，不应触发升人工",
     "user_id": "10005",
     "question": "我的账号被封了，我要申诉",
-    "ground_truth": "告知用户（UID 10005）账号被封禁原因（恶意退款），询问用户是否要创建申诉工单，待确认后创建工单。不应直接升人工。",
+    "ground_truth": "告知用户（UID 10005）账号被封禁原因（恶意退款），询问用户是否要创建申诉工单。",
+    "llm_judge_context": "待用户确认后创建申诉工单。不应直接调用escalate_to_human升人工。",
     "expected_tool_sequence": [
       {"name": "lookup_account", "args": {"user_id": "10005"}}
     ],

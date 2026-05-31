@@ -16,6 +16,7 @@ from .generate import generate_response_node
 from .detector import detector_node
 from .finish import finish_node
 from .human_node import human_node
+from .escalate_node import escalate_to_human_node
 
 __all__ = [
     "reasoning_node",
@@ -24,4 +25,5 @@ __all__ = [
     "detector_node",
     "finish_node",
     "human_node",
+    "escalate_to_human_node",
 ]

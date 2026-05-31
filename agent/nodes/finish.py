@@ -24,11 +24,12 @@ async def finish_node(state: AgentState) -> Dict[str, Any]:
         except Exception:
             pass
 
+    metadata = dict(state.get("metadata", {}))
+    metadata.pop("tool_repeated_call", None)
+    metadata["completed"] = True
+    metadata["finished_at"] = datetime.now(timezone.utc).isoformat()
+
     return {
-        "metadata": {
-            **state.get("metadata", {}),
-            "completed": True,
-            "finished_at": datetime.now(timezone.utc).isoformat(),
-        },
+        "metadata": metadata,
         "node_trace": ["finish"],
     }

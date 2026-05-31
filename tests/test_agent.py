@@ -161,15 +161,17 @@ class TestAgentGraph:
         """测试检测器节点逻辑"""
         from agent.graph import detector_node
 
-        # 测试敏感词触发
+        # 测试敏感词触发 → 回复被替换为警告
         state = create_initial_state("test", "test_uid_001", "测试")
-        state["final_response"] = "关于退款的问题"
+        state["final_response"] = "我可以私下转账给你"
 
         result = await detector_node(state)
 
-        assert "interrupt_info" in result
-        if result["interrupt_info"]:
-            assert result["interrupt_info"]["should_interrupt"] is True
+        # 不再走中断，而是直接替换 final_response
+        assert result.get("final_response") == "抱歉，您的请求涉及违规内容，请遵守游戏社区规范。"
+        assert result.get("interrupt_info") is None
+        assert "detector_intercepted" in result.get("metadata", {})
+        assert result["metadata"]["detector_intercepted"]["type"] == "sensitive"
 
     @pytest.mark.asyncio
     async def test_generate_response_node(self):

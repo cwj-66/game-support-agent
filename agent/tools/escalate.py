@@ -1,17 +1,13 @@
 """
-转人工工具 + 升等检测器
+升等检测器
 
-两路触发机制：
-1. LLM 主动调用 escalate_to_human → tool_exec_node 直接设 interrupt_info → route 到 human
-2. 轮次达到上限（默认10轮）→ tool_exec_node 跑 check_batch() 兜底检测：
-   - 超限 + 工具执行失败 → should_interrupt=True，升等转人工
-   - 仅超限无失败 → should_interrupt=False，tool_exec 自动建工单 + 优雅降级回复
+轮次达到上限时 tool_exec_node 跑 check_batch() 兜底检测：
+- 超限 + 工具执行失败 → should_interrupt=True，升等转人工
+- 仅超限无失败 → should_interrupt=False，tool_exec 自动建工单 + 优雅降级回复
 """
 
 import json
 from typing import Any, Dict, List, Optional
-
-from langchain_core.tools import tool
 
 from human_in_loop.schema import InterruptDecision
 
@@ -99,32 +95,3 @@ def get_default_escalate_detector() -> EscalateDetector:
     if _default_escalate_detector is None:
         _default_escalate_detector = EscalateDetector()
     return _default_escalate_detector
-
-
-# ============ LangChain 工具 ============
-
-@tool
-def escalate_to_human(reason: str) -> str:
-    """将对话移交人工客服。仅在用户明确说"转人工""叫人工""找客服"等指令时调用。
-
-    注意（按优先级）：
-    1. 用户明确要求人工 → 直接调用此工具
-    2. 用户情绪激动/不满 → 先回复询问"需要我为您转接人工客服吗？"，
-       待用户确认后再调用。不要直接升人工。
-    3. 账号封禁申诉、支付/退款问题等后台可异步处理的场景，
-       应调用 create_ticket 创建工单，不触发此工具。
-       若确需升人工，必须先调 create_ticket 再调本工具，
-       并在 reason 中包含工单号。
-
-    重要：若已创建工单，reason 中须包含工单号（TK-xxxx），方便客服交接。
-
-    Args:
-        reason: 具体说明为何需要人工介入，客服将直接看到此内容
-    """
-    return json.dumps({
-        "_health": {"ok": False, "confidence": None, "message": reason},
-        "should_interrupt": True,
-        "reason": reason,
-        "level": "high",
-        "source": "llm_escalate",
-    }, ensure_ascii=False)

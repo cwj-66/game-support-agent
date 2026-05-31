@@ -19,7 +19,8 @@
         "step": 2,
         "new_session": true,
         "question": "我之前的问题处理好了吗？",
-        "ground_truth": "当前对话无历史记录（新会话），但系统根据用户UID 10003，通过check_ticket(user_id=\"10003\")从工单数据库查到该用户最近的工单，告知用户当前处理进度。这验证了工单系统作为跨会话上下文管理的能力。",
+        "ground_truth": "告知用户最近的工单当前处理进度。",
+        "llm_judge_context": "新会话无历史记录，系统根据用户UID 10003调用check_ticket(user_id=\"10003\")从工单数据库查到该用户最近的工单。验证了工单系统作为跨会话上下文管理的能力。",
         "expected_tool_sequence": [
           {"name": "check_ticket", "args": {}}
         ],

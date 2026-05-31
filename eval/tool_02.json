@@ -6,7 +6,8 @@
     "scenario": "被封禁账号查询，预期触发封禁处理流程",
     "user_id": "10002",
     "question": "我的账号登不上去了，帮我看看是不是被封了",
-    "ground_truth": "告知用户（UID 10002）账号已被封禁，原因为使用外挂程序（违反用户协议第3.2条），充值总额328元。然后询问用户是否需要创建申诉工单，待用户确认后调用create_ticket。",
+    "ground_truth": "告知用户（UID 10002）账号已被封禁，原因为使用外挂程序（违反用户协议第3.2条）。询问用户是否需要创建申诉工单。",
+    "llm_judge_context": "待用户确认后调用create_ticket创建申诉工单",
     "expected_tool_sequence": [
       {"name": "lookup_account", "args": {"user_id": "10002"}}
     ],
