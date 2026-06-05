@@ -1,9 +1,8 @@
 """
-系统层转人工节点（handoff）
+转人工 Handoff 节点
 
-当 graph 层检测到用户明确要求转人工（human_requested=True），
-但 LLM 未在 ReAct 循环中主动调用 escalate_to_human 工具时，
-由此节点整理对话上下文为结构化 payload，然后移交 human 节点处理。
+tool_exec 检测到 request_human_escalation 后设置 interrupt_info，
+route_from_tool_exec 路由至此节点，整理对话上下文后移交 human 节点处理。
 """
 
 from typing import Dict, Any

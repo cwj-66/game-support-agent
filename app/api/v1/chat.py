@@ -50,10 +50,6 @@ def _get_interrupt_response(interrupt_payload: dict) -> str:
             return "抱歉，我暂时没有找到相关信息，已为您转接人工客服协助处理，请稍候。"
         return "正在为您转接人工客服处理，请稍候。"
 
-    # 自动升等（工具失败/账号封禁等）
-    if source == "auto_escalate":
-        return "正在为您转接人工客服处理，请稍候。"
-
     return "正在为您转接人工客服，请稍候。"
 
 
@@ -212,6 +208,57 @@ async def get_chat_history(
         messages=items,
         total=len(items),
     )
+
+
+@router.get("/reply/{session_id}")
+async def get_human_reply(session_id: str):
+    """
+    轮询人工回复状态（供前端轮询）
+
+    当 human_node interrupt 被人工审核恢复后，finish_node 会写入带 human_source=True
+    标记的 AIMessage。前端轮询此端点即可感知人工回复已就绪。
+
+    返回：
+    - {status: "completed", reply: "..."} — 人工已回复
+    - {status: "pending"} — 尚未回复
+    """
+    checkpointer = await get_checkpointer()
+    config = {
+        "configurable": {
+            "thread_id": session_id,
+            "checkpoint_ns": "game_support_agent",
+        }
+    }
+
+    # 兼容 LangGraph 不同版本的 checkpoint 查询
+    checkpoint_tuple = await checkpointer.aget_tuple(config)
+    if checkpoint_tuple is None:
+        config_no_ns = {"configurable": {"thread_id": session_id}}
+        checkpoint_tuple = checkpointer.get_tuple(config_no_ns)
+
+    if checkpoint_tuple is None:
+        return {"status": "pending"}
+
+    channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
+    messages = channel_values.get("messages", [])
+
+    # 找最后一条 AIMessage，检查是否有 human_source 标记
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            kwargs = msg.additional_kwargs or {}
+            msg_metadata = msg.metadata or {}
+            if kwargs.get("human_source") or msg_metadata.get("human_source"):
+                reply = msg.content if isinstance(msg.content, str) else str(msg.content)
+                return {"status": "completed", "reply": reply}
+            break
+
+    # 兜底：直接检查 human_reply 字段（兼容旧数据）
+    human_reply = channel_values.get("human_reply")
+    final_response = channel_values.get("final_response") or ""
+    if human_reply and final_response:
+        return {"status": "completed", "reply": final_response}
+
+    return {"status": "pending"}
 
 
 # ──────────────────────────────────────────────

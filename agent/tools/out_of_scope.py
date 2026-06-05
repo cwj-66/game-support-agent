@@ -19,5 +19,5 @@ def report_out_of_scope(reason: str) -> str:
         "_health": {"ok": True, "confidence": 0.0},
         "status": "out_of_scope",
         "reason": reason,
-        "message": f"当前系统无法处理此请求。请如实告知用户，并询问是否需要转人工客服。",
+        "message": f"当前系统无法处理此请求。请如实告知用户，并询问是否需要创建工单。",
     }, ensure_ascii=False)

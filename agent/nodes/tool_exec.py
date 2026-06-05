@@ -2,10 +2,8 @@
 通用工具执行节点
 读取 AIMessage.tool_calls，动态分发并执行对应工具
 
-兜底策略（按优先级）：
-1. LLM 主动调用 escalate_to_human → 直接设 interrupt_info，路由到 human
-2. 轮次达上限 + 工具执行失败 → check_batch 返回 should_interrupt=True，路由到 human
-3. 轮次达上限无失败 → 自动建工单 + 设 metadata.react_timeout，reasoning 跳过 LLM 直接降级回复
+兜底策略：
+轮次达上限 → 设 metadata.react_ask_human，generate 输出"是否需要为您转接人工客服？"
 """
 
 import json
@@ -26,11 +24,8 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     职责：
     1. 找到最后一条带 tool_calls 的 AIMessage
     2. 依次执行每个工具调用
-    3. 若执行 escalate_to_human → 直接设 interrupt_info 升等
-    4. 所有工具执行完后，若轮次达上限：
-       - 有工具失败 → 设 interrupt_info 升等转人工
-       - 无工具失败 → 自动建工单 + 设 metadata.react_timeout
-    5. 将 ToolMessage 写回 messages
+    3. 所有工具执行完后，若轮次达上限 → 设 metadata.react_ask_human
+    4. 将 ToolMessage 写回 messages
     """
     messages = state.get("messages", [])
 
@@ -48,16 +43,28 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     tool_messages: List[ToolMessage] = []
     tool_call_records: List[Dict[str, Any]] = []
     metadata = state.get("metadata", {})
-    interrupt_info = None
     # 记录本次执行中是否有创建工单，供 state.ticket_id 更新
     _new_ticket_id: str | None = None
 
     # 计算 ReAct 轮次
     prev_tool_calls = state.get("tool_calls", [])
-    non_escalate_count = sum(
-        1 for tc in prev_tool_calls if tc.get("tool") != "escalate_to_human"
-    )
-    react_round = non_escalate_count + 1
+    react_round = len(prev_tool_calls) + 1
+
+    # 检查是否包含 request_human_escalation → 跳过所有工具，直接升等
+    for tc in last_ai.tool_calls:
+        if tc["name"] == "request_human_escalation":
+            reason = tc["args"].get("reason", "用户要求转人工")
+            return {
+                "interrupt_info": {
+                    "should_interrupt": True,
+                    "reason": reason,
+                    "level": "high",
+                    "sensitive_words": [],
+                    "pending_content": None,
+                    "source": "llm_escalate",
+                },
+                "node_trace": ["tool_exec"],
+            }
 
     for tc in last_ai.tool_calls:
         tool_name: str = tc["name"]
@@ -148,21 +155,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                     except Exception:
                         pass
 
-            # escalate_to_human：LLM 主动升等，直接设 interrupt_info
-            if tool_name == "escalate_to_human":
-                try:
-                    data = json.loads(result_str)
-                except (json.JSONDecodeError, ValueError):
-                    data = {}
-                interrupt_info = {
-                    "should_interrupt": True,
-                    "reason": data.get("reason", "LLM主动请求人工介入"),
-                    "level": data.get("level", "high"),
-                    "sensitive_words": [],
-                    "pending_content": None,
-                    "source": "llm_escalate",
-                }
-
             tool_messages.append(ToolMessage(
                 content=result_str,
                 name=tool_name,
@@ -183,46 +175,10 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
 
         tool_call_records.append(record)
 
-    # 轮次达到上限 → 系统兜底检测
-    if interrupt_info is None:
-        detector = get_default_escalate_detector()
-        if react_round >= detector.max_react_rounds:
-            decision = detector.check_batch(tool_call_records, react_round)
-            if decision.should_interrupt:
-                # 超限 + 工具失败 → 升等转人工
-                interrupt_info = {
-                    "should_interrupt": True,
-                    "reason": decision.reason,
-                    "level": decision.level,
-                    "sensitive_words": [],
-                    "pending_content": None,
-                    "source": "auto_escalate",
-                }
-            elif "react_timeout" not in metadata:
-                # 仅超限无失败 → 自动建工单 + 优雅降级（仅首次，防重复）
-                try:
-                    from app.core.database import create_ticket as db_create
-                    user_query = state.get("user_query", "")
-                    desc = f"用户问题：{user_query}" if user_query else ""
-                    desc += f"\nAgent 多次尝试后仍无法回答。原因：{decision.reason}"
-                    ticket = db_create(
-                        player_uid=state.get("user_id", "unknown"),
-                        title="ReAct 超限自动工单",
-                        description=desc.strip(),
-                        priority="P2",
-                        session_id=state.get("session_id"),
-                    )
-                    _new_ticket_id = ticket.ticket_id
-                    metadata["react_timeout"] = {
-                        "ticket_id": ticket.ticket_id,
-                        "reason": decision.reason,
-                    }
-                except Exception:
-                    # 数据库不可用时静默跳过
-                    metadata["react_timeout"] = {
-                        "ticket_id": None,
-                        "reason": decision.reason,
-                    }
+    # 轮次达到上限 → 统一设 react_ask_human，由 generate 询问是否转人工
+    detector = get_default_escalate_detector()
+    if react_round >= detector.max_react_rounds:
+        metadata["react_ask_human"] = True
 
     result: Dict[str, Any] = {
         "messages": tool_messages,
@@ -232,6 +188,4 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     }
     if _new_ticket_id is not None:
         result["ticket_id"] = _new_ticket_id
-    if interrupt_info is not None:
-        result["interrupt_info"] = interrupt_info
     return result

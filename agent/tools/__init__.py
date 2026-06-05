@@ -7,6 +7,7 @@ from .account import create_lookup_account
 from .ticket import create_ticket
 from .ticket_status import create_check_ticket
 from .out_of_scope import report_out_of_scope
+from .human_escalation import request_human_escalation
 from .rag_client import get_rag_client, close_rag_client
 
 
@@ -102,5 +103,6 @@ def get_all_tools(user_id: str = ""):
         create_check_ticket(user_id),
         create_ticket,
         report_out_of_scope,
+        request_human_escalation,
     ]
     return tools

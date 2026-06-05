@@ -19,8 +19,6 @@ async def create_ticket(user_id: str, issue_type: str, description: str) -> str:
     - bug：游戏 bug 反馈
     - other：其他问题
 
-    如果后续仍需要升人工，必须先调 create_ticket 创建工单，再调
-    escalate_to_human 并在 reason 参数中带上工单号，方便客服交接。
 
     Args:
         user_id: 玩家 UID

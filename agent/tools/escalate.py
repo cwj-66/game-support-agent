@@ -1,9 +1,7 @@
 """
 升等检测器
 
-轮次达到上限时 tool_exec_node 跑 check_batch() 兜底检测：
-- 超限 + 工具执行失败 → should_interrupt=True，升等转人工
-- 仅超限无失败 → should_interrupt=False，tool_exec 自动建工单 + 优雅降级回复
+轮次达到上限时 tool_exec_node 触发 react_ask_human，由 generate 询问是否转人工
 """
 
 import json
@@ -26,12 +24,7 @@ class EscalateDetector:
         tool_call_records: List[Dict[str, Any]],
         react_round: int = 1,
     ) -> InterruptDecision:
-        """对一批工具执行结果做兜底检测（由 tool_exec_node 在轮次达上限时调用）
-
-        返回逻辑：
-        - 超限 + 存在 tool status=failed → should_interrupt=True，升等转人工
-        - 仅超限无失败 → should_interrupt=False，tool_exec 自动建工单 + 优雅降级
-        """
+        """对一批工具执行结果做兜底检测（当前返回值未被使用，保留用于日志）"""
         reasons: List[str] = []
         level = "low"
         has_failures = False

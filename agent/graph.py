@@ -22,11 +22,10 @@ from .checkpointer import get_checkpointer
 
 # ============ 路由函数 ============
 
-async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "generate", "human_handoff"]:
+async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "generate"]:
     """
     reasoning 节点路由
     - 最后一条 AIMessage 含 tool_calls → tool_exec
-    - 无 tool_calls 且 human_requested=True → human_handoff（系统层转人工）
     - 其余 → generate
     """
     from langchain_core.messages import AIMessage
@@ -37,10 +36,18 @@ async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "gener
             if getattr(msg, "tool_calls", None):
                 return "tool_exec"
             break
-    # LLM 决策结束但用户要求转人工 → 系统层拦截转人工
-    if state.get("human_requested"):
-        return "human_handoff"
     return "generate"
+
+
+async def route_from_tool_exec(state: AgentState) -> Literal["reasoning", "human_handoff"]:
+    """
+    tool_exec 节点路由
+    - interrupt_info 存在 → human_handoff（转人工）
+    - 其余 → reasoning（继续 ReAct 循环）
+    """
+    if state.get("interrupt_info"):
+        return "human_handoff"
+    return "reasoning"
 
 
 # ============ 图构建（懒加载） ============
@@ -60,10 +67,14 @@ workflow.set_entry_point("reasoning")
 workflow.add_conditional_edges(
     "reasoning",
     route_from_reasoning,
-    {"tool_exec": "tool_exec", "generate": "generate", "human_handoff": "human_handoff"},
+    {"tool_exec": "tool_exec", "generate": "generate"},
 )
 
-workflow.add_edge("tool_exec", "reasoning")
+workflow.add_conditional_edges(
+    "tool_exec",
+    route_from_tool_exec,
+    {"reasoning": "reasoning", "human_handoff": "human_handoff"},
+)
 
 workflow.add_edge("generate", "detector")
 

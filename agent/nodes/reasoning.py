@@ -51,28 +51,6 @@ def _build_llm_from_settings() -> ChatOpenAI:
     raise ValueError("未配置 LLM 密钥，请在 .env 设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
 
 
-def _detect_human_request(user_query: str, history: list) -> bool:
-    """关键词匹配检测用户是否明确要求转人工"""
-    import re
-
-    # 合并当前查询与上一轮用户消息（多轮对话场景）
-    combined = user_query
-    from langchain_core.messages import HumanMessage
-    for msg in reversed(history[-6:]):
-        if isinstance(msg, HumanMessage):
-            text = msg.content if isinstance(msg.content, str) else ""
-            combined = text + " " + combined
-            break
-
-    keywords = [
-        "人工", "客服", "真人", "转人工", "找人工",
-        "customer service", "human agent", "talk to a human",
-        "real person", "speak to a",
-    ]
-    pattern = "|".join(re.escape(k) for k in keywords)
-    return bool(re.search(pattern, combined, re.IGNORECASE))
-
-
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     """
     推理节点：LLM 绑定工具后自主决策（ReAct 风格）
@@ -81,7 +59,6 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     - 调用 query_knowledge 查询游戏知识库
     - 调用 lookup_account 查询玩家账号状态（按需传 fields 参数）
     - 调用 create_ticket 创建客服工单
-    - 调用 escalate_to_human 主动触发人工审核
     - 直接输出回答（不调用任何工具）
 
     工具结果会追加到 messages，LLM 可多轮循环调用直到给出最终回复。
@@ -91,29 +68,11 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     history = state.get("messages", [])
     metadata = state.get("metadata", {})
 
-    # 关键词检测：用户是否明确要求转人工
-    human_requested = _detect_human_request(user_query, history)
-
-    # ReAct 超限兜底：直接输出优雅降级回复，不再调 LLM
-    react_timeout = metadata.get("react_timeout")
-    if react_timeout:
-        ticket_id = react_timeout.get("ticket_id")
-        reason = react_timeout.get("reason", "")
-        if ticket_id:
-            content = (
-                f"抱歉，我多次尝试后仍无法解决您的问题。"
-                f"已为您创建工单 {ticket_id}，会有专人在1-3个工作日内与您联系。"
-                f"感谢您的耐心等待。"
-            )
-        else:
-            content = (
-                f"抱歉，我多次尝试后仍无法解决您的问题。"
-                f"建议您联系人工客服获取进一步帮助。"
-            )
+    # react_ask_human → 跳过 LLM，由 generate 询问是否转人工
+    if metadata.get("react_ask_human"):
         return {
-            "messages": [AIMessage(content=content)],
+            "messages": [AIMessage(content="")],
             "metadata": metadata,
-            "human_requested": human_requested,
             "node_trace": ["reasoning"],
         }
 
@@ -140,15 +99,10 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [response],
             "metadata": metadata,
-            "human_requested": human_requested,
             "node_trace": ["reasoning"],
         }
 
-    # human_requested 时只暴露查询类工具，禁止创建工单和转人工
     allowed_tools = get_all_tools(user_id)
-    if human_requested:
-        allowed_names = {"query_knowledge", "lookup_account"}
-        allowed_tools = [t for t in allowed_tools if t.name in allowed_names]
     llm_with_tools = llm.bind_tools(allowed_tools)
 
     try:
@@ -169,6 +123,5 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     return {
         "messages": [response],
         "metadata": metadata,
-        "human_requested": human_requested,
         "node_trace": ["reasoning"],
     }
