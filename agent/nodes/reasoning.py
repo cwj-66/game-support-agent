@@ -68,14 +68,6 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     history = state.get("messages", [])
     metadata = state.get("metadata", {})
 
-    # react_ask_human → 跳过 LLM，由 generate 询问是否转人工
-    if metadata.get("react_ask_human"):
-        return {
-            "messages": [AIMessage(content="")],
-            "metadata": metadata,
-            "node_trace": ["reasoning"],
-        }
-
     system_prompt = GAME_SUPPORT_SYSTEM_PROMPT
     if user_id:
         system_prompt += f"\n\n当前玩家 UID：{user_id}"
@@ -96,6 +88,19 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
         except Exception as exc:
             response = AIMessage(content=f"抱歉，处理您的请求时出现问题，建议联系人工客服。（错误：{exc}）")
         has_tool_calls = False
+        return {
+            "messages": [response],
+            "metadata": metadata,
+            "node_trace": ["reasoning"],
+        }
+
+    # 超限 → 摘掉工具，让 LLM 基于已有上下文（含 system_info 指导信息）生成最终回复
+    if metadata.get("max_rounds_reached"):
+        metadata.pop("max_rounds_reached", None)
+        try:
+            response: AIMessage = await llm.ainvoke(llm_messages)
+        except Exception as exc:
+            response = AIMessage(content=f"抱歉，处理您的请求时出现问题，建议联系人工客服。（错误：{exc}）")
         return {
             "messages": [response],
             "metadata": metadata,

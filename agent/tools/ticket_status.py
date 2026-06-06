@@ -1,6 +1,6 @@
 """
 工单查询工具
-直接使用 SQLite 查询工单数据，不经过 MCP
+使用 SQLite 查询工单数据
 """
 
 import json

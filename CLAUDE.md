@@ -11,7 +11,7 @@
 | AI 编排 | LangGraph / langchain-core / langchain-openai |
 | LLM | 阿里云 DashScope (qwen-turbo) 优先，OpenAI 兜底 |
 | API 服务 | FastAPI + Pydantic |
-| 持久化 | LangGraph MemorySaver（内存，当前演示用） |
+| 持久化 | LangGraph AsyncSqliteSaver (SQLite) + 工单 SQLite |
 | 审核界面 | Streamlit |
 | 终端工具 | rich 库 |
 | 测试 | pytest |
@@ -21,34 +21,44 @@
 ```
 game-support-agent/
 ├── agent/                          # LangGraph 核心编排
-│   ├── graph.py                    # 主图：6 个节点 + 3 条条件边 + 路由函数
+│   ├── graph.py                    # 主图：7 个节点 + 3 条条件边 + 路由函数
 │   ├── state.py                    # AgentState 定义（TypedDict）
-│   ├── checkpointer.py             # MemorySaver 状态持久化（单例）
+│   ├── checkpointer.py             # AsyncSqliteSaver 状态持久化（SQLite 文件）
 │   ├── nodes/
 │   │   ├── reasoning.py            # LLM 推理节点（bind_tools 自主决策）
 │   │   ├── tool_exec.py            # 通用工具分发器（按 tool_calls 执行）
-│   │   └── human_node.py           # 人工审核节点（interrupt 挂起 + 恢复）
+│   │   ├── generate.py             # 客服回复润色生成
+│   │   ├── detector.py             # 安全检测节点（敏感词/工具失败替换内容）
+│   │   ├── human_node.py           # 人工审核节点（interrupt 挂起 + 恢复）
+│   │   ├── escalate_node.py        # 转人工 Handoff 节点（整理上下文后移交 human）
+│   │   └── finish.py               # 结束节点（清理元数据、更新工单状态）
 │   ├── tools/
-│   │   ├── __init__.py             # get_all_tools() 工厂，暴露 4 个工具
+│   │   ├── __init__.py             # get_all_tools() 工厂，暴露 5 个工具
 │   │   ├── query_knowledge.py        # KnowledgeTool（HTTP 直接调用 RAG 知识库）
 │   │   ├── rag_client.py            # RAG HTTP 客户端（直接调 enterprise-rag）
-│   │   ├── escalate.py             # 转人工工具 + EscalateDetector 升等检测（两路触发）
-│   │   ├── account.py              # lookup_account(fields=None)（查询账号状态，按需取字段）
-│   │   └── ticket.py               # create_ticket（创建工单）
+│   │   ├── escalate.py             # EscalateDetector 升等检测器（保留供后续扩展）
+│   │   ├── account.py              # lookup_account(fields)（查询账号状态，按需取字段）
+│   │   ├── ticket.py               # create_ticket（创建工单）
+│   │   ├── ticket_status.py         # check_ticket（查询工单进度）
+│   │   └── human_escalation.py      # request_human_escalation（转人工升等工具）
 │   └── prompts/
 │       └── system.py               # 系统提示词（决策 + 客服润色）
 ├── app/                            # FastAPI 服务层
 │   ├── main.py                     # 入口（CORS、路由、生命周期）
 │   ├── api/v1/
 │   │   ├── chat.py                 # POST /chat/send、GET /chat/history、POST /chat/stream
-│   │   └── human.py                # 审核接口（pending、review、history、status）
+│   │   ├── human.py                # 审核接口（pending、review、status）
+│   │   └── ticket.py               # 工单接口（创建、查询、更新、统计）
 │   ├── core/
+│   │   ├── database.py             # SQLite 工单 CRUD
+│   │   ├── pending_store.py        # 待审核队列（内存，重启丢失）
 │   │   ├── config.py               # pydantic-settings 配置管理
 │   │   ├── llm.py                  # LLM 工厂（阿里云 > OpenAI 回退）
 │   │   └── exceptions.py           # 5 种业务异常 + 全局处理
 │   └── models/
 │       ├── chat.py                 # 对话请求/响应模型
-│       └── review.py               # 审核请求/响应模型
+│       ├── review.py               # 审核请求/响应模型
+│       └── ticket.py               # 工单数据模型
 ├── human_in_loop/                  # Human-in-loop 底层模块
 │   ├── detector.py                 # InterruptDetector 安全兜底（敏感词 + 置信度）
 │   ├── reviewer.py                 # HumanReviewer（APPROVE / MODIFY / OVERRIDE）
@@ -84,7 +94,7 @@ game-support-agent/
                       │
                       ▼
               ┌───────────────┐
-              │  reasoning    │  ←─ LLM 绑定工具，自主决策
+              │  reasoning    │  ←─ LLM 绑定 5 个工具，自主决策
               │  (推理节点)   │     调工具？调什么工具？
               └───┬───────┬───┘
                   │       │
@@ -96,62 +106,60 @@ game-support-agent/
         │ (工具执行)  │  │ (生成回复)│
         └─────┬──────┘  └────┬─────┘
               │               │
-              │     ┌─────────┘
-              │     ▼
-     ┌────────┐  ┌──────────┐
-     │  human │  │ detector │  ←─ 最后一道安全兜底
-     │(人工审核)│  │(中断检测) │     敏感词/置信度
-     └────┬───┘  └────┬─────┘
-          │           │
-          │    ┌──────┴──────┐
-          │    │             │
-          │    ▼             ▼
-          │  ┌────────┐ ┌────────┐
-          │  │ finish │ │ human  │
-          │  │ (结束)  │ │(人工审核)│
-          │  └────────┘ └────┬───┘
-          └─────────┬────────┘
-                    │
-                    ▼
-              ┌──────────┐
-              │ generate │  ←─ 人工审核完成后重新生成回复
-              │ (重新生成)│
-              └──────────┘
+         有升等│               │
+         请求 │               ▼
+              ▼         ┌──────────┐       ┌──────────────────┐
+     ┌──────────────┐   │ detector │  ←─  │ 安全检测，命中则  │
+     │human_handoff │   │ (安全检测)│      │ 直接替换回复内容  │
+     │(转人工Handoff)│   └────┬─────┘      └──────────────────┘
+     └──────┬───────┘        │
+            │                ▼
+            ▼          ┌──────────┐
+     ┌──────────┐      │  finish  │
+     │  human   │      │  (结束)  │
+     │(人工审核) │      └──────────┘
+     └────┬─────┘
+          │
+          ▼
+    ┌──────────┐
+    │  finish  │  ←─ 若有 human_reply，作为最终回复
+    │  (结束)  │
+    └──────────┘
 ```
 
 ### 节点职责
 
 | 节点 | 职责说明 |
 |---|---|
-| **reasoning** | LLM 绑定 4 个工具进行自主决策。返回 AIMessage 可有 tool_calls（调工具）或无（直接润色）。出错时降级为兜底消息 |
-| **tool_exec** | 通用分发器。逐条执行 tool_calls，写回 ToolMessage。对 `escalate_to_human` 做二次检测（EscalateDetector）。记录调用审计 |
-| **generate** | 结合工具结果和客服提示词生成最终回复。若有人工审核结果（OVERRIDE/MODIFY），直接用人工内容。评估回复置信度并存到 metadata |
-| **detector** | 最后一道安全兜底。InterruptDetector 检查内容中是否有敏感词、置信度是否过低 |
-| **human** | 调用 `interrupt()` 挂起图，等待人工操作。恢复后由 HumanReviewer 处理三种操作 + 写审计日志 |
-| **finish** | 结束节点。记录结束时间，将本轮对话压缩为一句摘要存到 `session_summary`，供下一轮复用 |
+| **reasoning** | LLM 绑定 5 个工具进行自主决策。返回 AIMessage 可有 tool_calls（调工具）或无（直接润色）。出错时降级为兜底消息 |
+| **tool_exec** | 通用分发器。逐条执行 tool_calls，写回 ToolMessage。对 `request_human_escalation` 提前拦截并直接设 interrupt_info。重复调用检测、工单上下文注入。记录调用审计 |
+| **generate** | 结合工具结果和客服提示词生成最终回复。有关联工单时回写 agent_reply |
+| **detector** | 安全兜底（不触发中断）。敏感词命中 → 替换回复为违规警告；工具调用失败 → 替换为道歉+询问转人工。拦截记录写入 metadata |
+| **human_handoff** | 转人工 Handoff。整理工具执行记录和对话上下文，构建 interrupt_info，路由到 human 节点 |
+| **human** | 调用 `interrupt()` 挂起图，等待人工输入。恢复后直接将人工回复字符串写入 state.human_reply |
+| **finish** | 结束节点。若有 human_reply 则作为最终回复（标记 human_source）。关联工单自动标记 resolved。清理运行时元数据 |
 
 ### 条件路由
 
-| 路由函数 | 来源 → 去向 | 判断逻辑 |
+| 路由/边 | 来源 → 去向 | 判断逻辑 |
 |---|---|---|
 | `route_from_reasoning` | reasoning → tool_exec / generate | AIMessage 含 tool_calls → tool_exec，否则 generate |
-| `route_from_tool_exec` | tool_exec → human / reasoning | `interrupt_info.source == "llm_escalate"` → human，否则回 reasoning（ReAct 循环） |
-| `route_from_detector` | detector → human / finish | `should_interrupt == True` → human，否则 finish |
+| `route_from_tool_exec` | tool_exec → reasoning / human_handoff | `interrupt_info` 存在 → human_handoff，否则回 reasoning（ReAct 循环） |
+| 固定边 | detector → finish | 直连（检测结果直接替换回复内容，不触发中断） |
+| 固定边 | human → finish | 直连（human_reply 由 finish_node 处理为最终回复） |
 
-### Human-in-loop 机制（两层检测）
+### Human-in-loop 机制
 
-**第一层 — 业务升等检测（escalate.py）**：两路触发——LLM 主动调用 escalate_to_human 工具（内部跑 EscalateDetector 深度判断），同时 tool_exec_node 每次执行完所有工具后调用 check_escalation() 兜底检测（工具失败/知识库无结果/ReAct 超限）。
+**触发升等**：LLM 调用 `request_human_escalation` 工具 → tool_exec 检测到后设 `interrupt_info` → `human_handoff` 节点整理上下文 → `human` 节点挂起。
 
-**第二层 — 安全兜底检测（InterruptDetector）**：在 generate 之后，检查最终回复是否含敏感词、置信度是否过低。这是最后防线。
+**安全兜底**：`detector` 节点在 generate 之后执行，检查敏感词和工具调用失败（不触发 interrupt，直接替换回复内容 + 记录拦截日志到 metadata）。
 
-**三种审核操作**：
-- APPROVE：直接通过原 Agent 回复
-- MODIFY：修改后通过（人工编辑版）
-- OVERRIDE：覆盖，人工重写
+**人工审核（简化版）**：
+审核员通过 API 直接输入回复字符串 → `Command(resume=reply)` 恢复图执行 → `human_node` 把字符串写入 `state.human_reply` → `finish_node` 作为最终回复（标记 `human_source=True`）。
 
 ### 状态定义（AgentState）
 
-关键字段：`messages`（对话历史，add_messages 自动合并）、`user_query`、`session_id`、`interrupt_info`、`human_review`、`tool_calls`（审计用）、`final_response`、`session_summary`（多轮摘要）、`metadata`
+关键字段：`messages`（对话历史，add_messages 自动合并）、`user_query`、`user_id`、`session_id`、`ticket_id`、`interrupt_info`、`human_review`、`human_reply`、`tool_calls`（审计用）、`final_response`、`node_trace`（节点执行路径追踪）、`metadata`
 
 ## 关键约束
 
@@ -161,7 +169,7 @@ game-support-agent/
 4. **所有工具必须通过 `agent/tools/__init__.py` 的 `get_all_tools()` 暴露**。新增工具请走这个工厂。
 5. **LLM 配置优先走阿里云 DashScope**，OpenAI 只做兜底。Key 配在 .env，不上传 GitHub。
 6. **知识工具必须做安全降级**。KnowledgeTool 已实现连接失败/超时的分层处理，新增类似工具也要遵循。
-7. **Agent 状态持久化目前用 MemorySaver（内存）**，重启后状态丢失。生产环境需替换。
+7. **Agent 状态持久化目前用 AsyncSqliteSaver（SQLite 文件）**，重启后状态保留。生产环境可替换为 RedisSaver 或 PostgresSaver。
 8. **代码注释和 Docstring 用中文**，便于团队理解。
 9. `.claude/` 目录和 `.env` 不上传 GitHub（已在 `.gitignore` 中配置）。
 
@@ -204,10 +212,10 @@ docker-compose up -d
 ## 当前进度
 
 ### 已完成
-- [x] LangGraph 图结构定义（6 个节点 + 条件边 + ReAct 循环）
-- [x] 4 个客服工具（知识库查询、账号查询、创建工单、转人工）
+- [x] LangGraph 图结构定义（7 个节点 + 条件边 + ReAct 循环）
+- [x] 5 个客服工具（知识库查询、账号查询、创建工单、查工单进度、转人工）
 - [x] RAG 知识库 HTTP 集成（直接调用 RAG 服务）
-- [x] Human-in-loop 完整链路（两层检测 + interrupt + 三种操作 + 审计日志）
+- [x] Human-in-loop 完整链路（升等触发 + handoff 整理 + interrupt 挂起 + detector 安全兜底 + 审计日志）
 - [x] FastAPI 服务层（对话接口 + 审核接口 + SSE 流式）
 - [x] Streamlit 审核界面
 - [x] 终端 CLI

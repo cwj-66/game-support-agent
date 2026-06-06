@@ -22,26 +22,6 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
     messages = state.get("messages", [])
     user_query = state.get("user_query", "")
 
-    # ReAct 超限后询问是否转人工
-    if state.get("metadata", {}).get("react_ask_human"):
-        metadata = dict(state.get("metadata", {}))
-        metadata.pop("react_ask_human", None)
-        final_response = "抱歉，我暂时无法完成您的请求。是否需要为您转接人工客服？"
-        ai_message = AIMessage(content=final_response)
-        ticket_id = state.get("ticket_id")
-        if ticket_id:
-            try:
-                from app.core.database import update_ticket
-                update_ticket(ticket_id, agent_reply=final_response)
-            except Exception:
-                pass
-        return {
-            "messages": [ai_message],
-            "final_response": final_response,
-            "metadata": metadata,
-            "node_trace": ["generate"],
-        }
-
     if messages:
         settings = get_settings()
         llm = get_chat_model(model_name=settings.GENERATE_MODEL_NAME)

@@ -3,7 +3,7 @@
 读取 AIMessage.tool_calls，动态分发并执行对应工具
 
 兜底策略：
-轮次达上限 → 设 metadata.react_ask_human，generate 输出"是否需要为您转接人工客服？"
+轮次达上限 → 注入系统提示，让 LLM 基于已有信息生成最终回复
 """
 
 import json
@@ -14,7 +14,9 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from ..state import AgentState
 from ..tools import get_all_tools, simplify_tool_context
-from ..tools.escalate import get_default_escalate_detector
+
+# 最大 ReAct 轮次，超限后不再执行新工具调用
+MAX_REACT_ROUNDS = 5
 
 
 async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
@@ -24,8 +26,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     职责：
     1. 找到最后一条带 tool_calls 的 AIMessage
     2. 依次执行每个工具调用
-    3. 所有工具执行完后，若轮次达上限 → 设 metadata.react_ask_human
-    4. 将 ToolMessage 写回 messages
+    3. 将 ToolMessage 写回 messages
     """
     messages = state.get("messages", [])
 
@@ -46,9 +47,24 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     # 记录本次执行中是否有创建工单，供 state.ticket_id 更新
     _new_ticket_id: str | None = None
 
-    # 计算 ReAct 轮次
+    # 计算已执行的 ReAct 轮次
     prev_tool_calls = state.get("tool_calls", [])
-    react_round = len(prev_tool_calls) + 1
+    current_round = len(prev_tool_calls) + 1
+
+    # 超限 → 不执行工具，注入指导信息让 LLM 基于已有上下文生成最终回复
+    if current_round >= MAX_REACT_ROUNDS:
+        metadata["max_rounds_reached"] = True
+        return {
+            "messages": [ToolMessage(
+                content="已到最大查询轮次。请基于已有信息给用户最终回复。"
+                        "如果未能解决问题，请如实说明情况并询问是否需要创建工单由专员跟进。",
+                name="system_info",
+                tool_call_id="_max_rounds",
+            )],
+            "tool_calls": prev_tool_calls,
+            "metadata": metadata,
+            "node_trace": ["tool_exec"],
+        }
 
     # 检查是否包含 request_human_escalation → 跳过所有工具，直接升等
     for tc in last_ai.tool_calls:
@@ -174,11 +190,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             ))
 
         tool_call_records.append(record)
-
-    # 轮次达到上限 → 统一设 react_ask_human，由 generate 询问是否转人工
-    detector = get_default_escalate_detector()
-    if react_round >= detector.max_react_rounds:
-        metadata["react_ask_human"] = True
 
     result: Dict[str, Any] = {
         "messages": tool_messages,

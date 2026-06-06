@@ -24,7 +24,9 @@
       "Bash(D:\\\\miniconda3\\\\python.exe *)",
       "Bash(D:/miniconda3/python.exe *)",
       "Bash(git stash *)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(pytest tests/ -v --tb=short)",
+      "Bash(PYTHONPATH=. pytest tests/ -v --tb=short)"
     ]
   }
 }

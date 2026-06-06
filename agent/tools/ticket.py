@@ -1,6 +1,6 @@
 """
 工单创建工具
-直接使用 SQLite 持久化工单数据，不经过 MCP
+使用 SQLite 持久化工单数据
 """
 
 import json

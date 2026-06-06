@@ -6,9 +6,7 @@ from .query_knowledge import create_knowledge_tool
 from .account import create_lookup_account
 from .ticket import create_ticket
 from .ticket_status import create_check_ticket
-from .out_of_scope import report_out_of_scope
 from .human_escalation import request_human_escalation
-from .rag_client import get_rag_client, close_rag_client
 
 
 def simplify_tool_context(records: List[Dict[str, Any]]) -> List[Dict[str, str]]:
@@ -42,8 +40,6 @@ def simplify_tool_context(records: List[Dict[str, Any]]) -> List[Dict[str, str]]
                 entry["args"] = (inp.get("query", "") or "")[:80]
             elif tool == "check_ticket":
                 entry["args"] = inp.get("ticket_id", "") or ""
-            elif tool == "report_out_of_scope":
-                entry["args"] = (inp.get("reason", "") or "")[:60]
             else:
                 # 兜底：只保留非空值 key
                 compact = ",".join(f"{k}={v}" for k, v in inp.items() if v is not None)
@@ -69,8 +65,6 @@ def simplify_tool_context(records: List[Dict[str, Any]]) -> List[Dict[str, str]]
                     status_val = data.get("status", "")
                     reply = data.get("agent_reply", "")
                     entry["result"] = f"{status_val}" + (f" | {reply[:60]}" if reply else "")
-                elif tool == "report_out_of_scope":
-                    entry["result"] = "已上报"
                 else:
                     entry["result"] = str(data)[:120]
                 if status == "failed":
@@ -102,7 +96,6 @@ def get_all_tools(user_id: str = ""):
         create_lookup_account(user_id),
         create_check_ticket(user_id),
         create_ticket,
-        report_out_of_scope,
         request_human_escalation,
     ]
     return tools
