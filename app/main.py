@@ -60,6 +60,15 @@ async def lifespan(app: FastAPI):
         print(f"[STARTUP] MCP client init skipped: {e}")
         print("[STARTUP] Local mock tools will be used as fallback")
 
+    # 初始化 RedisSaver（Agent 状态持久化）
+    try:
+        from agent.checkpointer import init_checkpointer
+        await init_checkpointer()
+        print(f"[STARTUP] RedisSaver initialized")
+    except Exception as e:
+        print(f"[STARTUP] RedisSaver init failed: {e}")
+        print(f"[STARTUP] Agent will not work without Redis — start it with: docker compose up -d redis")
+
     # 初始化 SQLite 数据库（工单表）
     try:
         from app.core.database import init_db

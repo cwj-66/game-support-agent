@@ -34,7 +34,15 @@
       "Bash(docker run *)",
       "Bash(pip -V)",
       "Bash(./venv/Scripts/pip install *)",
-      "Bash(docker rm *)"
+      "Bash(docker rm *)",
+      "Bash(./venv/Scripts/python -c \"from langgraph.checkpoint.redis import RedisSaver; print\\('RedisSaver OK'\\); import inspect; sig = inspect.signature\\(RedisSaver.__init__\\); print\\('__init__:', sig\\)\")",
+      "Bash(./venv/Scripts/python -c ' *)",
+      "Bash(./venv/Scripts/python.exe *)",
+      "Bash(timeout 10 ./venv/Scripts/python -m app.main)",
+      "Bash(docker pull *)",
+      "Bash(timeout 8 ./venv/Scripts/python -m app.main)",
+      "Bash(findstr :8002)",
+      "Bash(findstr LISTENING)"
     ]
   }
 }

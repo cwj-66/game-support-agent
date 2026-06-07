@@ -8,7 +8,7 @@ version: '3.8'
 services:
   # ==================== Redis（待审核队列持久化） ====================
   redis:
-    image: redis:7-alpine
+    image: redis/redis-stack-server:latest
     container_name: game-support-redis
     ports:
       - "6379:6379"

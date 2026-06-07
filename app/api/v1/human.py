@@ -92,7 +92,7 @@ async def submit_review(
     流程：
     1. 验证 session 处于挂起状态
     2. 将审核员的回复字符串传给 graph.invoke(Command(resume=...))
-       （使用同步 checkpointer + 线程池，避免 AsyncSqliteSaver 不支持同步调用的限制）
+       （RedisSaver 支持同步操作，通过线程池避免阻塞事件循环）
     3. 从公告板移除该会话
     4. 返回最终结果
     """
@@ -101,7 +101,7 @@ async def submit_review(
         raise HumanReviewNotPendingException(session_id)
 
     # 恢复图执行，human_node 从 interrupt() 处继续运行
-    # 使用同步 checkpointer + 线程池，避免 AsyncSqliteSaver 不支持同步调用的限制
+    # RedisSaver 支持同步 invoke，通过线程池避免阻塞事件循环
     g = get_sync_graph()
     result = await asyncio.to_thread(
         g.invoke,
