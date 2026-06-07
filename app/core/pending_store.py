@@ -66,7 +66,7 @@ async def add_pending(session_id: str, payload: dict) -> None:
     """记录一个等待人工审核的会话"""
     r = await _get_redis()
     if r:
-        await r.set(f"{_PREFIX}{session_id}", json.dumps(payload, ensure_ascii=False), ex=_TTL_SECONDS)
+        await r.set(f"{_PREFIX}{session_id}", json.dumps(payload, ensure_ascii=False, default=str), ex=_TTL_SECONDS)
     else:
         _memory[session_id] = payload
 

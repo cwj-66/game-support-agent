@@ -12,6 +12,8 @@ services:
     container_name: game-support-redis
     ports:
       - "6379:6379"
+    environment:
+      - REDIS_ARGS=--appendonly yes
     volumes:
       - redis-data:/data
     networks:
@@ -65,8 +67,10 @@ services:
       - ./logs:/app/logs
       - ./data:/app/data
     depends_on:
-      - rag-service
-      - redis
+      rag-service:
+        condition: service_started
+      redis:
+        condition: service_healthy
     networks:
       - game-support-network
     restart: unless-stopped
