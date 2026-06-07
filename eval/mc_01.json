@@ -17,7 +17,7 @@
       },
       {
         "step": 2,
-        "question": "我要申诉，帮我创建工单",
+        "question": "可以",
         "ground_truth": "为用户（UID 10005）创建封禁申诉工单，给出工单号（TK-格式），告知3-5个工作日处理时限。",
         "expected_tool_sequence": [
           {"name": "create_ticket", "args": {}}

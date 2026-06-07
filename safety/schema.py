@@ -1,5 +1,5 @@
 """
-Human-in-loop 数据结构定义
+安全检测数据结构定义
 """
 
 from typing import List, Dict, Any
@@ -11,7 +11,7 @@ class InterruptDecision:
     """
     中断决策结果
 
-    由InterruptDetector生成，决定是否触发人工审核，或者替换回复内容。
+    由InterruptDetector生成，决定是否替换回复内容。
 
     Attributes:
         should_interrupt: 是否触发检测

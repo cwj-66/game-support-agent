@@ -1,10 +1,12 @@
 """
 人工审核操作API
-审核员对Agent输出进行APPROVE/MODIFY/OVERRIDE操作
+审核员对Agent输出进行审核（reply 字符串恢复图执行）
 """
 
 from datetime import datetime, timezone
 from typing import Optional
+
+import asyncio
 
 from fastapi import APIRouter, Path
 from langgraph.types import Command
@@ -24,7 +26,7 @@ from app.models.review import (
     ReviewTask,
     ReviewHistoryResponse,
 )
-from agent.graph import get_graph
+from agent.graph import get_sync_graph
 
 
 router = APIRouter(prefix="/human", tags=["人工审核"])
@@ -67,6 +69,7 @@ async def list_pending_reviews() -> PendingReviewsResponse:
             risk_level=payload.get("interrupt_level", "medium"),
             created_at=created_at,
             wait_time_seconds=int(elapsed),
+            pending_content=payload.get("pending_content"),
         ))
 
     return PendingReviewsResponse(total=len(tasks), items=tasks)
@@ -88,7 +91,8 @@ async def submit_review(
 
     流程：
     1. 验证 session 处于挂起状态
-    2. 将审核员的回复字符串传给 graph.ainvoke(Command(resume=...))
+    2. 将审核员的回复字符串传给 graph.invoke(Command(resume=...))
+       （使用同步 checkpointer + 线程池，避免 AsyncSqliteSaver 不支持同步调用的限制）
     3. 从公告板移除该会话
     4. 返回最终结果
     """
@@ -97,10 +101,12 @@ async def submit_review(
         raise HumanReviewNotPendingException(session_id)
 
     # 恢复图执行，human_node 从 interrupt() 处继续运行
-    g = await get_graph()
-    result = await g.ainvoke(
+    # 使用同步 checkpointer + 线程池，避免 AsyncSqliteSaver 不支持同步调用的限制
+    g = get_sync_graph()
+    result = await asyncio.to_thread(
+        g.invoke,
         Command(resume=body.reply),
-        config=_graph_config(session_id),
+        _graph_config(session_id),
     )
 
     # 审核完成，从公告板移除

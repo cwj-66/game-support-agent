@@ -17,7 +17,7 @@ from .nodes import (
     human_node,
     human_handoff_node,
 )
-from .checkpointer import get_checkpointer
+from .checkpointer import get_checkpointer, get_sync_checkpointer
 
 
 # ============ 路由函数 ============
@@ -89,12 +89,29 @@ _compiled_graph = None
 
 
 async def get_graph():
-    """获取已编译的 LangGraph 实例（懒加载）"""
+    """获取已编译的 LangGraph 实例（懒加载，异步 checkpointer）"""
     global _compiled_graph
     if _compiled_graph is None:
         cp = await get_checkpointer()
         _compiled_graph = workflow.compile(checkpointer=cp)
     return _compiled_graph
+
+
+# 编译后的图（同步 checkpointer，用于 Command resume）
+_sync_compiled_graph = None
+
+
+def get_sync_graph():
+    """获取已编译的 LangGraph 实例（同步 checkpointer）
+
+    LangGraph 的 Command(resume=...) 恢复路径内部使用同步方法调用
+    checkpointer，因此需要同步 saver + 同步 invoke。
+    """
+    global _sync_compiled_graph
+    if _sync_compiled_graph is None:
+        cp = get_sync_checkpointer()
+        _sync_compiled_graph = workflow.compile(checkpointer=cp)
+    return _sync_compiled_graph
 
 
 # ============ 执行入口 ============
@@ -231,4 +248,4 @@ async def stream_agent(
         yield chunk
 
 
-__all__ = ["get_graph", "run_agent", "stream_agent"]
+__all__ = ["get_graph", "get_sync_graph", "run_agent", "stream_agent"]

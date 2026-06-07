@@ -575,13 +575,30 @@ async def main():
         missing = content_result.get("missing", [])
 
         # --- 综合总分 ---
-        # 权重：工具 30% + 升等 15% + 禁止 25% + 内容 30%
-        total_score = (
-            tool_score * 0.30
-            + esc_score * 0.15
-            + forbid_score * 0.25
-            + content_score * 0.30
+        # 判断是否为升等中断场景（graph 在 human 节点被 interrupt）
+        # 此时 agent 回复只是"正在转接人工"的固定句式，内容评分无区分度，跳过
+        is_escalation_interrupted = (
+            case.get("must_escalate")
+            and ("human" in result.get("node_trace", []) or result.get("has_interrupt", False))
         )
+
+        if is_escalation_interrupted:
+            # 升等中断场景：内容评分无意义
+            # 权重重新分配：工具 45% + 升等 35% + 禁止 20%
+            total_score = (
+                tool_score * 0.45
+                + esc_score * 0.35
+                + forbid_score * 0.20
+            )
+        else:
+            # 默认权重：工具 30% + 升等 15% + 禁止 25% + 内容 30%
+            total_score = (
+                tool_score * 0.30
+                + esc_score * 0.15
+                + forbid_score * 0.25
+                + content_score * 0.30
+            )
+
         if is_blocked:
             total_score = 0.0
 
@@ -593,7 +610,9 @@ async def main():
             reasons.append(f"[升等] {esc_reason}")
         if forbid_reason:
             reasons.append(f"[禁止] {forbid_reason}")
-        if missing:
+        if is_escalation_interrupted:
+            reasons.append("[内容] 升等中断，跳过内容评分（权重重新分配）")
+        elif missing:
             reasons.append(f"[内容] 遗漏: {'; '.join(missing)}")
         if is_blocked:
             reasons.append("触发了禁止操作，整题 0 分")

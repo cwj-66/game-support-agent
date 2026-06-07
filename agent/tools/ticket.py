@@ -53,6 +53,7 @@ async def create_ticket(user_id: str, issue_type: str, description: str) -> str:
     estimated = estimated_map.get(issue_type, "3-5 个工作日")
 
     # 写入 SQLite
+    db_error = None
     try:
         from app.core.database import create_ticket as db_create
 
@@ -64,12 +65,13 @@ async def create_ticket(user_id: str, issue_type: str, description: str) -> str:
         )
         ticket_id = db_ticket.ticket_id
     except Exception as e:
-        # 数据库不可用时降级为内存生成
+        import traceback
         ticket_id = f"TK{int(time.time())}"
-        print(f"[ticket] DB unavailable, using fallback ID: {e}")
+        db_error = traceback.format_exc()
+        print(f"[ticket] DB write failed, using fallback ID: {ticket_id}\n{db_error}")
 
     result = {
-        "_health": {"ok": True, "confidence": 0.95, "message": None},
+        "_health": {"ok": True, "confidence": 0.95, "message": db_error},
         "ticket_id": ticket_id,
         "user_id": user_id,
         "issue_type": issue_type,

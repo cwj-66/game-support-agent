@@ -38,7 +38,7 @@ class Ticket(BaseModel):
     status: TicketStatus = "pending"
     agent_reply: Optional[str] = Field(default=None, description="Agent自动回复")
     human_reviewed: bool = False
-    human_action: Optional[str] = Field(default=None, description="人工审核操作 APPROVE/MODIFY/OVERRIDE")
+    human_action: Optional[str] = Field(default=None, description="人工审核操作（仅 APPROVE）")
     reviewer_id: Optional[str] = None
     interrupt_reason: Optional[str] = Field(default=None, description="触发人工审核原因")
     tool_context: Optional[str] = Field(default=None, description="工具调用上下文（JSON）")

@@ -15,10 +15,10 @@ from app.models.ticket import Ticket, TicketStats
 def _resolve_db_path() -> str:
     try:
         from app.core.config import get_settings
-        return get_settings().DB_PATH
+        return get_settings().TICKET_DB_PATH
     except Exception:
         return os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "data", "game_support.db")
+            os.path.join(os.path.dirname(__file__), "..", "..", "data", "tickets.db")
         )
 
 

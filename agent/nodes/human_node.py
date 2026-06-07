@@ -34,6 +34,7 @@ async def human_node(state: AgentState) -> Dict[str, Any]:
         "session_id": session_id,
         "user_query": user_query,
         "content": final_response,
+        "pending_content": interrupt_info.get("pending_content"),  # 工具执行上下文
         "interrupt_reason": interrupt_info.get("reason"),
         "interrupt_level": interrupt_info.get("level"),
         "source": interrupt_info.get("source"),

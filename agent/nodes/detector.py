@@ -8,7 +8,7 @@ from typing import Dict, Any
 from langchain_core.messages import AIMessage
 
 from ..state import AgentState
-from human_in_loop.detector import get_default_detector
+from safety.detector import get_default_detector
 
 
 async def detector_node(state: AgentState) -> Dict[str, Any]:

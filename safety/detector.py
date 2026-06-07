@@ -1,5 +1,5 @@
 """
-中断触发判断模块
+安全检测模块
 实现InterruptDetector类，包含敏感词匹配和工具失败检测
 """
 
@@ -9,8 +9,7 @@ from .schema import InterruptDecision
 
 
 class InterruptDetector:
-    """
-    中断检测器（安全兜底层）
+    """安全检测（内容兜底层）
 
     职责：
     1. 检测 LLM 回复是否含违禁内容（越狱、涉黄、涉政、诱导等）

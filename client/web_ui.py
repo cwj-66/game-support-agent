@@ -50,22 +50,26 @@ class ReviewAPIClient:
             return []
 
     async def submit_review(
-        self, session_id: str, action: str, reviewer_id: str, modified_content: str | None = None
+        self, session_id: str, reply: str, reviewer_id: str
     ) -> bool:
         try:
             payload = {
-                "session_id": session_id,
-                "action": action,
+                "reply": reply,
                 "reviewer_id": reviewer_id,
             }
-            if modified_content:
-                payload["modified_content"] = modified_content
-            async with httpx.AsyncClient(timeout=15.0) as c:
+            async with httpx.AsyncClient(timeout=30.0) as c:
                 r = await c.post(f"{self.base_url}/human/review/{session_id}", json=payload)
-                r.raise_for_status()
+                if not r.is_success:
+                    detail = r.text
+                    try:
+                        detail = r.json().get("detail", r.text)
+                    except Exception:
+                        pass
+                    st.error(f"提交审核失败 ({r.status_code}): {detail}")
+                    return False
             return True
         except Exception as e:
-            st.error(f"提交审核失败: {e}")
+            st.error(f"提交审核异常: {type(e).__name__}: {e}")
             return False
 
 
@@ -143,32 +147,35 @@ def _render_hil_mini(task: dict, client: ReviewAPIClient):
     risk = task.get("risk_level", "low")
     badge = render_risk_badge(risk)
 
-    with st.popover(f"{badge} {(task.get('user_query') or '')[:30]}…", use_container_width=True):
+    # 截取足够长的上下文预览
+    preview = (task.get("user_query") or "")[:40]
+    with st.popover(f"{badge} {preview}…", use_container_width=True):
         st.markdown(f"**用户问题**：{task.get('user_query', '无')}")
         st.markdown(f"**Agent回复**：{task.get('agent_response', '无')}")
         st.markdown(f"**触发原因**：{task.get('interrupt_reason', '未知')}")
 
+        # 显示工具执行上下文（如有）
+        pending_ctx = task.get("pending_content")
+        if pending_ctx:
+            with st.expander("📋 查看工具执行上下文", expanded=False):
+                st.text(pending_ctx)
+
         reviewer_id = st.session_state.get("reviewer_id", "admin_001")
-        modified = st.text_area(
-            "修改内容（可选）",
-            value=task.get("agent_response", ""),
-            height=80,
-            key=f"hil_text_{session_id}",
+        reply = st.text_area(
+            "人工回复内容",
+            height=120,
+            key=f"hil_reply_{session_id}",
+            placeholder="请输入回复内容，将直接发送给用户…",
         )
 
-        ca, cb, cc = st.columns(3)
-        with ca:
-            if st.button("✅ 通过", key=f"hil_app_{session_id}", use_container_width=True):
-                asyncio.run(client.submit_review(session_id, "APPROVE", reviewer_id))
-                st.rerun()
-        with cb:
-            if st.button("✏️ 修改", key=f"hil_mod_{session_id}", use_container_width=True):
-                asyncio.run(client.submit_review(session_id, "MODIFY", reviewer_id, modified))
-                st.rerun()
-        with cc:
-            if st.button("📝 覆盖", key=f"hil_ovr_{session_id}", use_container_width=True):
-                asyncio.run(client.submit_review(session_id, "OVERRIDE", reviewer_id, modified))
-                st.rerun()
+        if st.button("✅ 提交回复", key=f"hil_submit_{session_id}", use_container_width=True, type="primary"):
+            if not reply.strip():
+                st.warning("请填写回复内容")
+            else:
+                ok = asyncio.run(client.submit_review(session_id, reply, reviewer_id))
+                if ok:
+                    st.success("审核已提交，回复已发送给用户")
+                    st.rerun()
 
 
 def _render_compact_ticket(ticket: dict, client: TicketClient):
@@ -423,9 +430,8 @@ def render_help():
 
         ### 审核操作说明
 
-        - **✅ 通过 (APPROVE)**: 直接通过Agent的回复，不做修改
-        - **✏️ 修改 (MODIFY)**: 在Agent回复基础上修改后通过
-        - **📝 覆盖 (OVERRIDE)**: 完全重写回复（使用新内容）
+        - **提交回复**：填写回复内容后提交，回复将直接发送给用户
+        - **工具执行上下文**：可展开查看 Agent 查询了哪些工具和结果，辅助判断
 
         ### 工单处理说明
 

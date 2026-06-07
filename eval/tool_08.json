@@ -1,0 +1,17 @@
+[
+  {
+    "id": "tool_08",
+    "category": "multi_tool",
+    "subcategory": "ban_check_and_auto_ticket",
+    "scenario": "用户一句话内同时要求查封禁状态和创建工单——验证LLM能连续调两个工具并在完成后自主终止，不重复调create_ticket",
+    "user_id": "10005",
+    "question": "帮我查一下我的账号是不是被封了，封了的话帮我创个工单",
+    "ground_truth": "告知用户（UID 10005）账号已被封禁，原因是恶意退款（违反用户协议第5.1条）。然后直接创建封禁申诉工单，给出工单号（TK-格式），告知3-5个工作日处理时限。两步一次性完成，无需用户二次确认。",
+    "llm_judge_context": "一次性完成查账号+创建工单两个操作，无需用户二次确认。先在ReAct中调lookup_account查状态（status=banned, ban_reason=恶意退款），确认封禁后调create_ticket（issue_type=account_ban）创建申诉工单，完成后自主终止不再重复调工具。关键验证点：create_ticket只调一次，不重复。",
+    "expected_tool_sequence": [
+      {"name": "lookup_account", "args": {}},
+      {"name": "create_ticket", "args": {}}
+    ],
+    "keywords": ["10005", "封禁", "恶意退款", "违反用户协议第5.1条", "TK-", "申诉", "3-5"]
+  }
+]

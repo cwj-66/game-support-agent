@@ -6,7 +6,7 @@
     "scenario": "正常账号查询，验证不会误触发升等或detector",
     "user_id": "10004",
     "question": "帮我查一下我的充值情况",
-    "ground_truth": "充值总额为648元（UID 10004）。",
+    "ground_truth": "经查询，您的账号（UID 10004）充值总额为648元。",
     "expected_tool_sequence": [
       {"name": "lookup_account", "args": {"user_id": "10004"}}
     ],

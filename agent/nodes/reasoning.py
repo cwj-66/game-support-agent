@@ -15,40 +15,22 @@ from app.core.config import get_settings
 
 
 def _build_llm_from_settings() -> ChatOpenAI:
-    """
-    从 .env 配置创建大模型实例
-
-    规则：
-    - 优先使用阿里云：DASHSCOPE_API_KEY
-    - 其次使用 OpenAI：OPENAI_API_KEY
-    """
+    """从 .env 配置创建大模型实例"""
     settings = get_settings()
     model_name = settings.REASONING_MODEL_NAME or settings.MODEL_NAME or "qwen-turbo"
     base_url = settings.LLM_BASE_URL or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
-    if settings.DASHSCOPE_API_KEY:
-        extra_body = (
-            {"thinking": {"type": "disabled"}}
-            if not settings.ENABLE_THINKING
-            else None
-        )
-        return ChatOpenAI(
-            api_key=settings.DASHSCOPE_API_KEY,
-            model=model_name,
-            base_url=base_url,
-            temperature=0.2,
-            extra_body=extra_body,
-        )
-
-    if settings.OPENAI_API_KEY:
-        return ChatOpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            model=model_name,
-            base_url=base_url if settings.LLM_BASE_URL else None,
-            temperature=0.2,
-        )
-
-    raise ValueError("未配置 LLM 密钥，请在 .env 设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
+    extra_body = (
+        {"thinking": {"type": "disabled"}}
+        if not settings.ENABLE_THINKING
+        else None
+    )
+    return ChatOpenAI(
+        api_key=settings.DASHSCOPE_API_KEY,
+        model=model_name,
+        base_url=base_url,
+        temperature=0.2,
+        extra_body=extra_body,
+    )
 
 
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:

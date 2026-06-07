@@ -3,7 +3,7 @@
 使用pydantic-settings统一管理配置
 """
 
-from typing import List, Optional, Literal
+from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -30,7 +30,7 @@ class Settings(BaseSettings):
         GENERATE_MODEL_NAME: generate 节点的模型
         
         HIL_ENABLED: 是否启用Human-in-loop
-        中断检测的敏感词在 human_in_loop.detector 中管理
+        中断检测的敏感词在 safety.detector 中管理
     """
     
     # 基础配置
@@ -115,7 +115,11 @@ class Settings(BaseSettings):
     # 数据库配置
     DB_PATH: str = Field(
         default="./data/game_support.db",
-        description="SQLite 数据库文件路径（存放 Agent 状态检查点和工单数据）",
+        description="SQLite 检查点数据库文件路径（LangGraph Agent 状态持久化）",
+    )
+    TICKET_DB_PATH: str = Field(
+        default="./data/tickets.db",
+        description="SQLite 工单数据库文件路径",
     )
 
     # 日志配置
@@ -147,17 +151,3 @@ def reload_settings():
     _settings = Settings()
 
 
-def get_llm_provider(settings: Optional[Settings] = None) -> Literal["dashscope", "openai"]:
-    """
-    获取当前可用的LLM提供商
-
-    优先级：
-    1. DASHSCOPE_API_KEY
-    2. OPENAI_API_KEY
-    """
-    cfg = settings or get_settings()
-    if cfg.DASHSCOPE_API_KEY:
-        return "dashscope"
-    if cfg.OPENAI_API_KEY:
-        return "openai"
-    raise ValueError("未配置LLM密钥：请设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")

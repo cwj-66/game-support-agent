@@ -15,17 +15,6 @@ async def finish_node(state: AgentState) -> Dict[str, Any]:
     """
     结束节点
     """
-    # 若有关联工单且仍在 processing，标记为 resolved
-    ticket_id = state.get("ticket_id")
-    if ticket_id:
-        try:
-            from app.core.database import update_ticket, get_ticket
-            t = get_ticket(ticket_id)
-            if t and t.status in ("processing", "pending"):
-                update_ticket(ticket_id, status="resolved")
-        except Exception:
-            pass
-
     metadata = dict(state.get("metadata", {}))
     metadata.pop("tool_repeated_call", None)
     metadata["completed"] = True

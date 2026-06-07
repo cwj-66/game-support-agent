@@ -108,7 +108,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
 
         # 重复调用检测：相同 tool + 相同 args 已在之前执行过，跳过执行
         is_duplicate = False
-        if tool_name in ("check_ticket", "lookup_account"):
+        if tool_name in ("check_ticket", "lookup_account", "create_ticket"):
             for prev_call in state.get("tool_calls", []):
                 if prev_call.get("tool") == tool_name and prev_call.get("input") == tool_args:
                     is_duplicate = True
