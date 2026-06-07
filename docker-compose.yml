@@ -6,6 +6,23 @@
 version: '3.8'
 
 services:
+  # ==================== Redis（待审核队列持久化） ====================
+  redis:
+    image: redis:7-alpine
+    container_name: game-support-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - game-support-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   # ==================== RAG 服务 ====================
   rag-service:
     image: enterprise-rag:latest
@@ -36,6 +53,7 @@ services:
     environment:
       - PORT=8002
       - RAG_SERVICE_URL=http://rag-service:8000
+      - REDIS_URL=redis://redis:6379/0
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MODEL_NAME=${MODEL_NAME:-qwen-turbo}
@@ -48,6 +66,7 @@ services:
       - ./data:/app/data
     depends_on:
       - rag-service
+      - redis
     networks:
       - game-support-network
     restart: unless-stopped
@@ -74,6 +93,8 @@ services:
 
 volumes:
   rag-data:
+    driver: local
+  redis-data:
     driver: local
 
 networks:

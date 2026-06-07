@@ -69,7 +69,7 @@ async def submit_ticket(body: TicketCreate):
 
     if has_interrupt:
         interrupt_payload = result.get("__interrupt__") or {}
-        add_pending(session_id, interrupt_payload)
+        await add_pending(session_id, interrupt_payload)
         update_ticket(
             ticket.ticket_id,
             status="escalated",

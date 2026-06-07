@@ -112,6 +112,16 @@ class Settings(BaseSettings):
         description="LangSmith项目名称"
     )
 
+    # Redis 配置（生产环境：pending_store 持久化 + 可选缓存）
+    REDIS_URL: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis 连接地址（pending_store 使用，不可用时自动降级为内存）",
+    )
+    REDIS_PASSWORD: Optional[str] = Field(
+        default=None,
+        description="Redis 密码",
+    )
+
     # 数据库配置
     DB_PATH: str = Field(
         default="./data/game_support.db",

@@ -27,7 +27,14 @@
       "Bash(git checkout *)",
       "Bash(pytest tests/ -v --tb=short)",
       "Bash(PYTHONPATH=. pytest tests/ -v --tb=short)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(where redis-server *)",
+      "Bash(docker --version)",
+      "Bash(wsl --status)",
+      "Bash(docker run *)",
+      "Bash(pip -V)",
+      "Bash(./venv/Scripts/pip install *)",
+      "Bash(docker rm *)"
     ]
   }
 }

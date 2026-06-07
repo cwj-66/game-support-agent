@@ -49,7 +49,7 @@ async def list_pending_reviews() -> PendingReviewsResponse:
 
     从内存公告板读取所有处于 interrupt 挂起状态的会话
     """
-    pending = get_all_pending()
+    pending = await get_all_pending()
     now = datetime.now(timezone.utc)
 
     tasks: list[ReviewTask] = []
@@ -97,7 +97,7 @@ async def submit_review(
     4. 返回最终结果
     """
     # 校验会话是否在等待审核
-    if not get_pending(session_id):
+    if not await get_pending(session_id):
         raise HumanReviewNotPendingException(session_id)
 
     # 恢复图执行，human_node 从 interrupt() 处继续运行
@@ -110,7 +110,7 @@ async def submit_review(
     )
 
     # 审核完成，从公告板移除
-    remove_pending(session_id)
+    await remove_pending(session_id)
 
     final_response = result.get("final_response", body.reply)
     processed_at = datetime.now(timezone.utc).isoformat()
@@ -136,7 +136,7 @@ async def get_review_status(
     - 是否需要审核
     - 当前审核进度
     """
-    payload = get_pending(session_id)
+    payload = await get_pending(session_id)
     if payload:
         return {
             "session_id": session_id,

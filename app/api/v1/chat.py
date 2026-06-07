@@ -100,7 +100,7 @@ async def send_message(
         if result.get("has_interrupt") or interrupt_payload:
             if not isinstance(interrupt_payload, dict):
                 interrupt_payload = {}
-            add_pending(request.session_id, interrupt_payload)
+            await add_pending(request.session_id, interrupt_payload)
             source = interrupt_payload.get("source", "")
             return ChatResponse(
                 session_id=request.session_id,
@@ -133,7 +133,7 @@ async def send_message(
         if "GraphInterrupt" in exc_name or "Interrupt" in exc_name:
             execution_time_ms = int((time.perf_counter() - start_time) * 1000)
             interrupt_payload = e.args[0] if e.args else {}
-            add_pending(request.session_id, interrupt_payload)
+            await add_pending(request.session_id, interrupt_payload)
             return ChatResponse(
                 session_id=request.session_id,
                 status="under_review",
