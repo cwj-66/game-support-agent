@@ -25,8 +25,8 @@ email-validator>=2.1.0
 # SQLite 检查点持久化（langgraph >= 1.0 需单独安装）
 langgraph-checkpoint-sqlite>=3.0.0
 # sqlite3 标准库内置，无需额外安装
-# redis>=5.0.0
-# sqlalchemy>=2.0.0
+redis>=5.0.0
+sqlalchemy>=2.0.0
 # asyncpg>=0.29.0  # PostgreSQL async driver
 # aioredis>=2.0.0  # Redis async client
 

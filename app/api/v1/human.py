@@ -8,10 +8,11 @@ from typing import Optional
 
 import asyncio
 
-from fastapi import APIRouter, Path
+from fastapi import APIRouter, Depends, Header, HTTPException, Path
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
+from app.core.config import get_settings
 from app.core.exceptions import (
     HumanReviewNotPendingException,
 )
@@ -32,6 +33,25 @@ from agent.graph import get_sync_graph
 router = APIRouter(prefix="/human", tags=["人工审核"])
 
 
+# ── 审核鉴权 ──────────────────────────────────────────────────────
+# 简化版：X-Reviewer-Token 与配置文件密钥比对
+# 生产应替换为 JWT + RBAC 方案
+
+
+async def require_reviewer_token(x_reviewer_token: str = Header(...)) -> str:
+    """校验审核员身份（依赖注入）"""
+    settings = get_settings()
+    if not settings.REVIEWER_API_KEY:
+        # 未配置密钥 → 跳过鉴权（开发模式）
+        return "dev_reviewer"
+    if x_reviewer_token != settings.REVIEWER_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid reviewer token",
+        )
+    return x_reviewer_token
+
+
 def _graph_config(session_id: str) -> dict:
     """构建 LangGraph 恢复执行所需的 config"""
     return {
@@ -43,7 +63,9 @@ def _graph_config(session_id: str) -> dict:
 
 
 @router.get("/pending", response_model=PendingReviewsResponse)
-async def list_pending_reviews() -> PendingReviewsResponse:
+async def list_pending_reviews(
+    _token: str = Depends(require_reviewer_token),
+) -> PendingReviewsResponse:
     """
     获取待审核任务列表
 
@@ -85,6 +107,7 @@ class HumanReplyRequest(BaseModel):
 async def submit_review(
     session_id: str,
     body: HumanReplyRequest,
+    _token: str = Depends(require_reviewer_token),
 ) -> ReviewResponse:
     """
     提交人工审核结果
@@ -128,6 +151,7 @@ async def submit_review(
 @router.get("/status/{session_id}")
 async def get_review_status(
     session_id: str = Path(..., description="会话ID"),
+    _token: str = Depends(require_reviewer_token),
 ):
     """
     查询会话的审核状态
@@ -154,6 +178,7 @@ async def get_review_status(
 
 @router.get("/history", response_model=ReviewHistoryResponse)
 async def get_review_history(
+    _token: str = Depends(require_reviewer_token),
     reviewer_id: Optional[str] = None,
     limit: int = 50,
 ) -> ReviewHistoryResponse:

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     
     # API配置
     API_V1_PREFIX: str = "/api/v1"
-    HOST: str = "0.0.0.0"
+    HOST: str = "127.0.0.1"
     PORT: int = 8002
     
     # 外部服务配置
@@ -95,7 +95,11 @@ class Settings(BaseSettings):
     # 安全配置
     API_KEY: Optional[str] = Field(
         default=None,
-        description="FastAPI层API Key"
+        description="FastAPI层通用API Key"
+    )
+    REVIEWER_API_KEY: Optional[str] = Field(
+        default=None,
+        description="审核员 API Key，用于人工审核接口鉴权（简化版，生产应替换为 JWT + RBAC）"
     )
     
     # LangSmith 可观测性配置

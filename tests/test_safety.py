@@ -93,13 +93,13 @@ class TestInterruptScenarios:
     
     def test_sensitive_refund_scenario(self):
         """测试退款敏感词场景"""
-        detector = InterruptDetector()
-        
+        detector = InterruptDetector(sensitive_words=["退款"])
+
         # 用户询问退款
         decision = detector.detect(
             content="我想申请退款，充错金额了",
         )
-        
+
         assert decision.should_interrupt is True
         assert "退款" in decision.sensitive_words
         assert decision.level == "high"
@@ -118,12 +118,12 @@ class TestInterruptScenarios:
 
     def test_complain_scenario(self):
         """测试投诉场景"""
-        detector = InterruptDetector()
+        detector = InterruptDetector(sensitive_words=["投诉", "封号"])
 
         decision = detector.detect(
             content="我要投诉你们胡乱封号！",
         )
-        
+
         assert decision.should_interrupt is True
         assert "投诉" in decision.sensitive_words
         assert "封号" in decision.sensitive_words

@@ -4,11 +4,10 @@ Agent 测试
 """
 
 import pytest
-import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent.state import AgentState, create_initial_state, InterruptInfo, HumanReviewResult
-from agent.checkpointer import get_checkpointer, reset_checkpointer
+from langchain_core.messages import AIMessage, ToolMessage
 
 
 class TestAgentState:
@@ -24,6 +23,10 @@ class TestAgentState:
         assert state["messages"] == []
         assert state["interrupt_info"] is None
         assert state["human_review"] is None
+        assert state["human_reply"] is None
+        assert state["tool_calls"] == []
+        assert state["final_response"] is None
+        assert state["node_trace"] == []
         assert "metadata" in state
 
     def test_state_with_interrupt_info(self):
@@ -33,7 +36,7 @@ class TestAgentState:
             "reason": "检测到敏感词",
             "level": "high",
             "sensitive_words": ["封号"],
-            "pending_content": "待审核内容"
+            "pending_content": "待审核内容",
         }
 
         state = create_initial_state("test", "test_uid_001", "测试")
@@ -63,52 +66,108 @@ class TestCheckpointer:
 
     @pytest.mark.asyncio
     async def test_get_checkpointer_singleton(self):
-        """测试checkpointer单例"""
-        await reset_checkpointer()
+        """测试checkpointer单例行为（RedisSaver mocked）"""
+        from agent import checkpointer
 
-        cp1 = await get_checkpointer()
-        cp2 = await get_checkpointer()
+        # 重置单例
+        checkpointer._saver = None
 
-        assert cp1 is cp2
-        assert cp1 is not None
+        with patch("agent.checkpointer.RedisSaver") as mock_redis_saver:
+            mock_instance = MagicMock()
+            mock_redis_saver.return_value = mock_instance
+
+            cp1 = await checkpointer.get_checkpointer()
+            cp2 = await checkpointer.get_checkpointer()
+
+            assert cp1 is cp2
+            assert cp1 is not None
+            # init_checkpointer 只会被调用一次
+            assert mock_redis_saver.call_count == 1
+
+        checkpointer._saver = None
 
 
 class TestAgentNodes:
     """Agent节点测试"""
 
+    @staticmethod
+    def _make_mock_llm(ai_msg_return):
+        """创建 mock LLM，使 bind_tools 返回自身，ainvoke 返回指定消息"""
+        mock_llm = MagicMock()
+        # bind_tools 返回自身，这样 ainvoke 链能接上
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.ainvoke = AsyncMock(return_value=ai_msg_return)
+        return mock_llm
+
     @pytest.mark.asyncio
-    async def test_reasoning_node(self):
-        """测试推理节点"""
+    async def test_reasoning_node_no_tool(self):
+        """测试推理节点：无工具调用"""
         from agent.nodes.reasoning import reasoning_node
 
         state = create_initial_state("test_001", "test_uid_001", "如何获得原石？")
-        mock_llm = MagicMock()
 
-        result = await reasoning_node(state, mock_llm)
+        mock_ai_msg = MagicMock(spec=AIMessage)
+        mock_ai_msg.tool_calls = []
+        mock_ai_msg.content = "可以通过完成每日委托、开启宝箱等方式获得原石。"
+        mock_llm = self._make_mock_llm(mock_ai_msg)
 
-        # 验证返回结构
+        with patch("agent.nodes.reasoning._build_llm_from_settings", return_value=mock_llm):
+            result = await reasoning_node(state)
+
         assert "messages" in result
         assert "metadata" in result
-        assert "_need_tool" in result
-        assert "reasoning" in result["metadata"]
+        assert "node_trace" in result
+        assert result["node_trace"] == ["reasoning"]
+        assert result["metadata"]["reasoning"]["need_tool"] is False
+
+    @pytest.mark.asyncio
+    async def test_reasoning_node_with_tool(self):
+        """测试推理节点：触发了工具调用"""
+        from agent.nodes.reasoning import reasoning_node
+
+        state = create_initial_state("test_001", "test_uid_001", "帮我查一下账号状态")
+
+        mock_ai_msg = MagicMock(spec=AIMessage)
+        mock_ai_msg.tool_calls = [
+            {"name": "lookup_account", "args": {"fields": ["status"]}, "id": "call_1", "type": "tool_call"},
+        ]
+        mock_llm = self._make_mock_llm(mock_ai_msg)
+
+        with patch("agent.nodes.reasoning._build_llm_from_settings", return_value=mock_llm):
+            result = await reasoning_node(state)
+
+        assert result["metadata"]["reasoning"]["need_tool"] is True
 
     @pytest.mark.asyncio
     async def test_tool_exec_node(self):
         """测试工具执行节点"""
         from agent.nodes.tool_exec import tool_exec_node
 
-        state = create_initial_state("test_002", "test_uid_001", "原神角色介绍")
+        state = create_initial_state("test_002", "test_uid_001", "查账号状态")
+        state["messages"] = [
+            AIMessage(
+                content="我来查询账号状态",
+                tool_calls=[
+                    {"name": "lookup_account", "args": {"fields": ["status"]}, "id": "call_1", "type": "tool_call"},
+                ],
+            ),
+        ]
 
-        with patch("agent.tools.query_knowledge.KnowledgeTool") as mock_tool:
-            mock_instance = MagicMock()
-            mock_instance._arun = AsyncMock(return_value='{"has_answer": true}')
-            mock_tool.return_value = mock_instance
+        mock_tool = MagicMock()
+        mock_tool.name = "lookup_account"
+        mock_tool.ainvoke = AsyncMock(return_value='{"status": "normal"}')
 
+        with patch("agent.nodes.tool_exec.get_all_tools", return_value=[mock_tool]):
             result = await tool_exec_node(state)
 
-            assert "messages" in result
-            assert "tool_calls" in result
-            assert "metadata" in result
+        assert "messages" in result
+        assert "tool_calls" in result
+        assert len(result["tool_calls"]) == 1
+        assert result["tool_calls"][0]["tool"] == "lookup_account"
+        assert result["tool_calls"][0]["status"] == "completed"
+        assert len(result["messages"]) == 1
+        assert isinstance(result["messages"][0], ToolMessage)
+        assert result["messages"][0].name == "lookup_account"
 
     @pytest.mark.asyncio
     async def test_human_node(self):
@@ -116,81 +175,110 @@ class TestAgentNodes:
         from agent.nodes.human_node import human_node
 
         state = create_initial_state("test_003", "test_uid_001", "我要投诉封号")
-        state["final_response"] = "关于封号问题..."
         state["interrupt_info"] = {
             "should_interrupt": True,
             "reason": "检测到敏感词: 投诉",
             "level": "high",
             "sensitive_words": ["投诉"],
-            "pending_content": "关于封号问题..."
+            "pending_content": "关于封号问题...",
         }
 
         with patch("agent.nodes.human_node.interrupt") as mock_interrupt:
-            mock_interrupt.return_value = {
-                "action": "APPROVE",
-                "reviewer_id": "admin_001",
-                "timestamp": "2024-01-01T00:00:00",
-                "modified_content": None,
-                "notes": "通过",
-                "approved": True
-            }
+            mock_interrupt.return_value = "已处理，请放心"
 
             result = await human_node(state)
 
-            assert "human_review" in result
-            assert result["human_review"]["action"] == "APPROVE"
-            assert result["final_response"] is not None
-
-
-class TestAgentGraph:
-    """Agent图测试"""
-
-    def test_graph_compilation(self):
-        """测试图编译"""
-        from agent.graph import workflow
-
-        # 验证所有节点已注册
-        assert "reasoning" in workflow.nodes
-        assert "tool_exec" in workflow.nodes
-        assert "detector" in workflow.nodes
-        assert "human" in workflow.nodes
-        assert "generate" in workflow.nodes
+            assert "human_reply" in result
+            assert result["human_reply"] == "已处理，请放心"
+            assert result["node_trace"] == ["human"]
 
     @pytest.mark.asyncio
-    async def test_detector_node_logic(self):
-        """测试检测器节点逻辑"""
-        from agent.graph import detector_node
+    async def test_detector_node_sensitive(self):
+        """测试检测器节点：敏感词命中 → 回复替换为违规警告"""
+        from agent.nodes.detector import detector_node
 
-        # 测试敏感词触发 → 回复被替换为警告
         state = create_initial_state("test", "test_uid_001", "测试")
         state["final_response"] = "我可以私下转账给你"
+        state["metadata"] = {"tool_calls": []}
 
         result = await detector_node(state)
 
-        # 不再走中断，而是直接替换 final_response
         assert result.get("final_response") == "抱歉，您的请求涉及违规内容，请遵守游戏社区规范。"
         assert result.get("interrupt_info") is None
         assert "detector_intercepted" in result.get("metadata", {})
         assert result["metadata"]["detector_intercepted"]["type"] == "sensitive"
 
     @pytest.mark.asyncio
-    async def test_generate_response_node(self):
-        """测试响应生成节点"""
-        from agent.graph import generate_response_node
+    async def test_detector_node_pass(self):
+        """测试检测器节点：无敏感词时透传"""
+        from agent.nodes.detector import detector_node
 
         state = create_initial_state("test", "test_uid_001", "测试")
-        state["metadata"] = {
-            "knowledge_result": {
-                "has_answer": True,
-                "answer": "知识库答案"
-            }
-        }
+        state["final_response"] = "正常回复内容"
+        state["metadata"] = {"tool_calls": []}
+
+        result = await detector_node(state)
+
+        assert result.get("interrupt_info") is None
+        assert "node_trace" in result
+        assert result["node_trace"] == ["detector"]
+
+    @pytest.mark.asyncio
+    async def test_generate_response_node_fallback(self):
+        """测试响应生成节点：无消息时走 fallback"""
+        from agent.nodes.generate import generate_response_node
+
+        state = create_initial_state("test", "test_uid_001", "测试")
 
         result = await generate_response_node(state)
 
         assert "messages" in result
         assert "final_response" in result
-        assert result["final_response"] is not None
+        assert result["final_response"] == "抱歉，我暂时无法回答这个问题，建议联系人工客服。"
+
+    @pytest.mark.asyncio
+    async def test_finish_node_with_human_reply(self):
+        """测试结束节点：有人工回复时作为最终回复"""
+        from agent.nodes.finish import finish_node
+
+        state = create_initial_state("test", "test_uid_001", "测试")
+        state["human_reply"] = "人工回复内容"
+
+        result = await finish_node(state)
+
+        assert result["final_response"] == "人工回复内容"
+        assert result["metadata"]["completed"] is True
+
+    @pytest.mark.asyncio
+    async def test_finish_node_without_human_reply(self):
+        """测试结束节点：无人工回复"""
+        from agent.nodes.finish import finish_node
+
+        state = create_initial_state("test", "test_uid_001", "测试")
+
+        result = await finish_node(state)
+
+        assert "final_response" not in result
+        assert result["metadata"]["completed"] is True
+
+
+class TestAgentGraph:
+    """Agent图测试"""
+
+    def test_graph_compilation(self):
+        """测试图结构完整性"""
+        from agent.graph import workflow
+
+        expected_nodes = {
+            "reasoning", "tool_exec", "detector",
+            "human", "generate", "finish", "human_handoff",
+        }
+        actual_nodes = set(workflow.nodes.keys())
+
+        missing = expected_nodes - actual_nodes
+        extra = actual_nodes - expected_nodes
+        assert not missing, f"图中缺少节点: {missing}"
+        assert not extra, f"图中存在未预期的节点: {extra}"
 
 
 class TestAgentIntegration:
@@ -198,15 +286,16 @@ class TestAgentIntegration:
 
     @pytest.mark.asyncio
     async def test_full_flow_no_interrupt(self):
-        """测试无中断的完整流程"""
+        """测试无中断的完整流程（mocked graph）"""
         from agent.graph import run_agent
 
-        # Mock所有依赖
         mock_result = {
             "final_response": "这是回复内容",
             "messages": [],
-            "metadata": {"completed": True}
+            "metadata": {"completed": True},
+            "node_trace": [],
         }
+
         with patch("agent.graph.get_graph") as mock_get_graph:
             mock_graph = AsyncMock()
             mock_graph.ainvoke = AsyncMock(return_value=mock_result)
@@ -214,18 +303,10 @@ class TestAgentIntegration:
 
             result = await run_agent("test_session", "test_uid_001", "如何获得原石？")
 
-            assert "final_response" in result
+            assert result["final_response"] == "这是回复内容"
             assert result["session_id"] == "test_session"
 
     @pytest.mark.asyncio
     async def test_full_flow_with_interrupt(self):
         """测试带中断的完整流程"""
-        # 模拟中断场景
         pass  # TODO: 实现完整中断流程测试
-
-
-# TODO: 需要补充的测试
-# - TestKnowledgeTool: 知识工具适配器测试
-# - TestAgentPrompts: 提示词模板测试
-# - TestAgentStreaming: 流式输出测试
-# - TestAgentConcurrency: 并发会话测试

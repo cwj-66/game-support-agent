@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
 
     # 初始化 MCP 客户端（连接 Server + 工具发现）
     try:
-        mcp_tools = await init_mcp_client(settings.MCP_SERVER_URL + "/sse")
+        mcp_tools = await init_mcp_client(settings.MCP_SERVER_URL + "/mcp")
         print(f"[STARTUP] MCP client connected, discovered {len(mcp_tools)} tool(s)")
         for t in mcp_tools:
             print(f"         - {t.name}")
