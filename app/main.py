@@ -170,11 +170,11 @@ async def health_check():
 # 启动入口（开发时使用）
 if __name__ == "__main__":
     import uvicorn
-    
+
     settings = get_settings()
     uvicorn.run(
         "app.main:app",
-        host=settings.HOST,
+        host="127.0.0.1",
         port=settings.PORT,
         reload=settings.DEBUG
     )
