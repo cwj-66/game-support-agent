@@ -85,30 +85,30 @@ def simplify_tool_context(records: List[Dict[str, Any]]) -> List[Dict[str, str]]
 def get_all_tools(user_id: str = ""):
     """返回所有客服工具列表。
 
-    本地工具为主，lookup_account / check_ticket 的 user_id 由系统注入。
-    若 MCP Server 已连接（init_mcp_client 已调用），则把 MCP 工具追加进来，
-    同名工具以本地为准，避免重复。
+    优先级：
+    - MCP Server 已连接 → 使用 MCP 工具（跨进程调用）+ request_human_escalation（必须留在图内）
+    - MCP Server 未连接 → 全部使用本地工具作为兜底
 
     Args:
-        user_id: 当前玩家 UID，传给工厂创建绑定了该用户的工具实例
+        user_id: 当前玩家 UID，传给本地工厂函数（MCP 工具通过显式参数传 user_id，无需注入）
     """
-    local_tools = [
-        create_knowledge_tool(),
-        create_lookup_account(user_id),
-        create_check_ticket(user_id),
-        create_ticket,
-        request_human_escalation,
-    ]
+    # request_human_escalation 触发 LangGraph interrupt，必须留在本地，不能外置到 MCP
+    escalation_tool = request_human_escalation
 
-    # 合并 MCP 工具（只追加本地没有的工具，避免同名冲突）
     try:
         from .mcp_client import get_mcp_tools
         mcp_tools = get_mcp_tools()
         if mcp_tools:
-            local_names = {t.name for t in local_tools}
-            extra = [t for t in mcp_tools if t.name not in local_names]
-            return local_tools + extra
+            # MCP 已连接：用 MCP 工具 + 本地 escalation
+            return list(mcp_tools) + [escalation_tool]
     except Exception:
         pass
 
-    return local_tools
+    # MCP 未连接：全部本地工具兜底
+    return [
+        create_knowledge_tool(),
+        create_lookup_account(user_id),
+        create_check_ticket(user_id),
+        create_ticket,
+        escalation_tool,
+    ]
