@@ -48,7 +48,14 @@ async def init_mcp_client(url: str = "http://localhost:8001/mcp") -> list:
             "transport": "streamable_http",
         }
     })
-    _mcp_tools = await _mcp_client.get_tools()
+    raw = await _mcp_client.get_tools()
+    # 按工具名去重（langchain-mcp-adapters 多 session 并发时会返回重复工具）
+    seen: set = set()
+    _mcp_tools = []
+    for t in raw:
+        if t.name not in seen:
+            seen.add(t.name)
+            _mcp_tools.append(t)
     print(f"[MCP] MCP Server connected, discovered {len(_mcp_tools)} tool(s)")
     for t in _mcp_tools:
         print(f"         - {t.name}")
