@@ -19,18 +19,18 @@ game-support-agent/
 │   │   ├── human_handoff.py        # 转人工 Handoff（整理上下文）
 │   │   └── finish.py               # 结束节点
 │   ├── tools/
-│   │   ├── __init__.py             # get_all_tools() 工厂，暴露 5 个工具
+│   │   ├── __init__.py             # get_all_tools()：MCP 优先，本地兜底
 │   │   ├── query_knowledge.py      # KnowledgeTool（HTTP 调用 RAG 知识库）
 │   │   ├── rag_client.py           # RAG HTTP 客户端
-│   │   ├── account.py              # lookup_account（账号查询）
-│   │   ├── ticket.py               # create_ticket（创建工单）
-│   │   ├── ticket_status.py        # check_ticket（工单进度查询）
-│   │   ├── human_escalation.py     # request_human_escalation（请求转人工）
-│   │   └── mcp_client.py           # MCP 客户端封装
+│   │   ├── account.py              # lookup_account（本地 LangChain 包装）
+│   │   ├── ticket.py               # create_ticket（本地 LangChain 包装）
+│   │   ├── ticket_status.py        # check_ticket（本地 LangChain 包装）
+│   │   ├── human_escalation.py     # request_human_escalation（必须留在图内）
+│   │   └── mcp_client.py           # MCP Client（连接 mcp_server.py）
 │   └── prompts/
 │       └── system.py               # 系统提示词（决策 + 客服润色模板）
 ├── app/                            # FastAPI 服务层
-│   ├── main.py                     # 入口（CORS、路由、生命周期）
+│   ├── main.py                     # 入口（CORS、路由、生命周期、MCP Client 初始化）
 │   ├── api/v1/
 │   │   ├── chat.py                 # POST /chat/send、GET /chat/history、POST /chat/stream
 │   │   ├── human.py                # 审核接口（pending、review、status）
@@ -38,7 +38,9 @@ game-support-agent/
 │   ├── core/
 │   │   ├── config.py               # pydantic-settings 配置管理
 │   │   ├── llm.py                  # LLM 工厂（DashScope 优先，OpenAI 兜底）
-│   │   ├── database.py             # SQLite 工单 CRUD
+│   │   ├── database.py             # SQLite 工单 CRUD（底层）
+│   │   ├── ticket_service.py       # 工单业务逻辑（create/check，供 MCP 与本地工具共用）
+│   │   ├── account_service.py      # 账号查询业务逻辑（供 MCP 与本地工具共用）
 │   │   ├── pending_store.py        # 待审核队列（内存）
 │   │   └── exceptions.py           # 5 种业务异常 + 全局处理器
 │   └── models/
@@ -68,6 +70,7 @@ game-support-agent/
 │   ├── accounts.json               # 账号 mock 数据（账号查询工具使用）
 │   ├── game_support.db             # LangGraph 状态持久化
 │   └── tickets.db                  # 工单 SQLite
+├── mcp_server.py                   # MCP Server（独立进程，暴露 4 个客服工具）
 ├── .env.example
 ├── requirements.txt
 └── docker-compose.yml              # rag / agent-api / web-ui
@@ -96,11 +99,52 @@ game-support-agent/
 
 ### MCP 集成
 
-架构层面已集成 MCP（Model Context Protocol）客户端，支持：
-- **SQLite MCP Server**（stdio）：应用启动时自动 spawn npx 进程连接 SQLite，可通过 `mcp_read_query` / `mcp_write_query` 访问数据库
-- **SSE MCP Server**（可选）：连接远程 MCP Server 获取扩展工具集，连接失败自动降级不影响核心功能
+工具层采用 **MCP Server + MCP Client** 架构，业务逻辑与暴露层分离：
 
-当前版本工具层直接通过 `app.core.database` 操作 SQLite，MCP 路径已初始化待后续切换。
+```
+app/core/ticket_service.py   ─┐
+app/core/account_service.py  ─┤  业务逻辑（只写一次）
+app/core/database.py         ─┘
+         ↑              ↑
+mcp_server.py      agent/tools/*.py
+（@mcp.tool 注册）  （@tool 本地兜底）
+         ↑
+agent/tools/mcp_client.py → LangGraph reasoning / tool_exec
+```
+
+**MCP Server**（`mcp_server.py`，独立进程，端口 8001）暴露 4 个工具：
+- `create_ticket` / `check_ticket` / `lookup_account` / `query_knowledge`
+
+**MCP Client**（`agent/tools/mcp_client.py`）在 FastAPI 启动时连接 `http://localhost:8001/mcp`（streamable_http），发现并缓存工具。
+
+**工具选用策略**（`get_all_tools()`）：
+- MCP Server 已连接 → 使用 MCP 工具 + 本地 `request_human_escalation`（触发 interrupt，不能外置）
+- MCP Server 未连接 → 全部使用本地 LangChain 工具兜底
+
+**Graph 不感知 MCP**：`reasoning` 节点 `bind_tools()`，`tool_exec` 节点统一 `tool.ainvoke()`；MCP 工具由 `langchain-mcp-adapters` 转成 LangChain BaseTool，与本地工具调用方式相同。
+
+**启动 MCP（可选但推荐）**：
+
+```bash
+# 终端 1：MCP Server
+python mcp_server.py
+
+# 终端 2：FastAPI 主服务（启动时会自动连接 MCP）
+python -m app.main
+```
+
+连接成功时日志示例：`[MCP] MCP Server connected, discovered 4 tool(s)`
+
+### 工具层分层说明
+
+| 层级 | 文件 | 职责 |
+|------|------|------|
+| 核心逻辑 | `app/core/ticket_service.py`、`account_service.py` | 映射规则、读库写库、返回 dict |
+| MCP 暴露 | `mcp_server.py` | `@mcp.tool()` + Docstring（给 LLM 看）+ 调 service |
+| 本地兜底 | `agent/tools/ticket.py` 等 | `@tool` + Docstring + 调 service |
+| 图内专用 | `agent/tools/human_escalation.py` | 触发 LangGraph interrupt，不放入 MCP |
+
+Docstring 在 MCP 与本地各维护一份（参数签名可能不同，如 MCP 版 `check_ticket` 需显式传 `user_id`）；业务逻辑修改只需改 service 层。
 
 ### 工单生命周期
 
@@ -135,13 +179,21 @@ cp .env.example .env
 # 配置 LLM Key（DASHSCOPE_API_KEY 或 OPENAI_API_KEY）
 ```
 
-### 2. 启动 FastAPI 后端
+### 2. 启动服务
+
+**推荐：先启动 MCP Server，再启动主服务**
 
 ```bash
+# 终端 1：MCP Server（工具服务）
+python mcp_server.py
+
+# 终端 2：FastAPI 后端
 python -m app.main
 ```
 
-默认监听 `http://localhost:8002`，API 文档见 `http://localhost:8002/docs`
+仅启动主服务也可运行（自动降级为本地工具，不影响核心功能）。
+
+默认监听 `http://127.0.0.1:8002`，API 文档见 `http://127.0.0.1:8002/docs`
 
 ### 3. 启动前端界面
 
@@ -190,6 +242,7 @@ pytest --cov=agent --cov=safety --cov-report=html
 
 | 组件 | 命令 | 端口 |
 |------|------|------|
+| MCP Server（工具服务） | `python mcp_server.py` | 8001 |
 | FastAPI 后端 | `python -m app.main` | 8002 |
 | 用户界面 | `streamlit run client/user_ui.py` | 8501 |
 | 客服界面 | `streamlit run client/web_ui.py` | 8502 |
@@ -272,7 +325,7 @@ GET   /api/v1/human/status/{session_id}   # 查询审核状态
 | API 服务 | FastAPI + Pydantic |
 | 客户端 | Streamlit + rich CLI |
 | 持久化 | SQLite（LangGraph 状态 + 工单双库） |
-| 外部集成 | MCP (Model Context Protocol) |
+| 外部集成 | MCP Server（streamable_http）+ RAG HTTP |
 | 测试 | pytest |
 
 ## 已知限制与设计取舍
@@ -281,4 +334,4 @@ GET   /api/v1/human/status/{session_id}   # 查询审核状态
 
 2. **双 SQLite 数据库无跨库事务**：LangGraph checkpointer（`game_support.db`）和工单 CRUD（`tickets.db`）是独立的两个 SQLite 文件，没有跨库一致性保证。在生产规模下，checkpointer 建议替换为 RedisSaver/PostgresSaver。
 
-3. **工具层反向依赖 app 层**：`agent/tools/ticket.py` 和 `agent/tools/ticket_status.py` 直接导入 `app.core.database`。这意味着 agent 包不能脱离 app 包独立使用。后续可通过接口抽象解耦。
+3. **工具层通过 service 层访问数据**：`ticket_service.py` / `account_service.py` 封装业务逻辑，MCP Server 与本地 LangChain 工具共用；底层仍依赖 `app.core.database`。`request_human_escalation` 因需触发 LangGraph interrupt，仅保留在 agent 进程内。
