@@ -71,20 +71,3 @@ class RAGClient:
         if self._client:
             await self._client.aclose()
             self._client = None
-
-
-_rag_client: Optional[RAGClient] = None
-
-
-def get_rag_client() -> RAGClient:
-    global _rag_client
-    if _rag_client is None:
-        _rag_client = RAGClient()
-    return _rag_client
-
-
-async def close_rag_client():
-    global _rag_client
-    if _rag_client:
-        await _rag_client.close()
-        _rag_client = None
