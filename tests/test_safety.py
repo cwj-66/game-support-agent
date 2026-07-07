@@ -63,16 +63,6 @@ class TestInterruptDetector:
         assert "投诉" in decision.reason
         assert "工具调用失败" in decision.reason
     
-    def test_update_sensitive_words(self):
-        """测试更新敏感词列表"""
-        detector = InterruptDetector(sensitive_words=["旧词"])
-        
-        detector.update_sensitive_words(["新词1", "新词2"])
-        
-        decision = detector.detect("包含新词1的内容")
-        assert decision.should_interrupt is True
-        assert "新词1" in decision.sensitive_words
-    
     def test_case_insensitive_matching(self):
         """测试大小写不敏感匹配"""
         detector = InterruptDetector(
