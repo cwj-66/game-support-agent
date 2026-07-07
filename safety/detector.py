@@ -115,28 +115,6 @@ class InterruptDetector:
             sensitive_words=detected_words,
         )
 
-    def update_sensitive_words(self, words: List[str]):
-        """
-        更新敏感词列表
-
-        Args:
-            words: 新的敏感词列表
-        """
-        self.sensitive_words = words
-        self._compile_patterns()
-
-    def add_sensitive_word(self, word: str):
-        """添加单个敏感词"""
-        if word not in self.sensitive_words:
-            self.sensitive_words.append(word)
-            self._compile_patterns()
-
-    def remove_sensitive_word(self, word: str):
-        """移除敏感词"""
-        if word in self.sensitive_words:
-            self.sensitive_words.remove(word)
-            self._compile_patterns()
-
 
 # 默认检测器实例（单例模式）
 _default_detector: Optional[InterruptDetector] = None
