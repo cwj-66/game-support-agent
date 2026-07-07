@@ -159,9 +159,3 @@ def get_settings() -> Settings:
     return _settings
 
 
-def reload_settings():
-    """重新加载配置（用于配置热更新）"""
-    global _settings
-    _settings = Settings()
-
-

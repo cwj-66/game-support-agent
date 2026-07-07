@@ -69,27 +69,6 @@ class HumanReviewNotPendingException(AppException):
         )
 
 
-class RAGServiceException(AppException):
-    """RAG服务异常"""
-    def __init__(self, message: str = "知识库服务不可用"):
-        super().__init__(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="RAG_SERVICE_ERROR",
-            message=message
-        )
-
-
-class ValidationException(AppException):
-    """参数校验异常"""
-    def __init__(self, message: str, field: Optional[str] = None):
-        super().__init__(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            error_code="VALIDATION_ERROR",
-            message=message,
-            details={"field": field} if field else {}
-        )
-
-
 # ============ 异常处理器 ============
 
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
@@ -130,27 +109,7 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
             "details": {"error": str(exc)} if True else {},  # DEBUG时显示详情
             "path": request.url.path
         }
-    )
-
-
-# ============ 错误响应模型 ============
-
-class ErrorResponse:
-    """标准错误响应结构"""
-    
-    @staticmethod
-    def create(
-        error_code: str,
-        message: str,
-        details: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        return {
-            "success": False,
-            "error_code": error_code,
-            "message": message,
-            "details": details or {},
-            "timestamp": "2024-01-01T00:00:00"  # TODO: 真实时间
-        }
+        )
 
 
 # TODO: 未来扩展
