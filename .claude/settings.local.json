@@ -42,7 +42,8 @@
       "Bash(docker pull *)",
       "Bash(timeout 8 ./venv/Scripts/python -m app.main)",
       "Bash(findstr :8002)",
-      "Bash(findstr LISTENING)"
+      "Bash(findstr LISTENING)",
+      "Bash(PYTHONIOENCODING=utf-8 python eval/evaluate.py --category hil --output eval/report_hil --skip-llm)"
     ]
   }
 }
