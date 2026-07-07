@@ -12,44 +12,6 @@ from datetime import datetime
 ReviewActionType = Literal["APPROVE"]
 
 
-class ReviewAction(BaseModel):
-    """
-    人工审核操作请求
-
-    Attributes:
-        session_id: 需要审核的会话ID
-        action: 操作类型（仅 APPROVE）
-        reviewer_id: 审核员标识
-        modified_content: 审核员回复内容
-        notes: 审核备注
-    """
-    session_id: str = Field(..., description="会话ID")
-    action: ReviewActionType = Field(
-        ...,
-        description="审核操作: APPROVE-通过"
-    )
-    reviewer_id: str = Field(..., description="审核员ID")
-    modified_content: Optional[str] = Field(
-        default=None,
-        description="人工回复内容"
-    )
-    notes: Optional[str] = Field(
-        default=None,
-        description="审核备注说明"
-    )
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "session_id": "sess_12345",
-                "action": "APPROVE",
-                "reviewer_id": "admin_001",
-                "modified_content": "经过确认，您的账号状态正常...",
-                "notes": "已核实账号信息"
-            }
-        }
-
-
 class ReviewTask(BaseModel):
     """
     待审核任务模型

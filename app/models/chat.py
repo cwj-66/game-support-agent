@@ -90,12 +90,6 @@ class ChatHistoryResponse(BaseModel):
     total: int = Field(..., description="总消息数")
 
 
-class MessageFeedback(BaseModel):
-    """用户反馈模型"""
-    helpful: bool = Field(..., description="是否有帮助")
-    comment: Optional[str] = Field(default=None, description="用户评论")
-
-
 # TODO: 未来扩展
 # - 添加消息编辑模型
 # - 添加会话归档模型
