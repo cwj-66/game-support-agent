@@ -5,7 +5,7 @@ LangGraph图的状态结构，包含消息、中断标记、人工审核结果�
 
 import operator
 from typing import TypedDict, Annotated, List, Optional, Dict, Any, Literal
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph.message import add_messages
 from datetime import datetime, timezone
 
@@ -86,6 +86,10 @@ class AgentState(TypedDict):
     human_review: Optional[HumanReviewResult]
     # 人工回复内容（简化版），human_node 写入，finish_node 读取为最终回复
     human_reply: Optional[str]
+    # 当前是否处于人工接待模式（转人工后设为 True，客服关闭后设为 False）
+    human_mode: bool
+    # 人工接待操作：continue（继续聊）/ close（结束接待）
+    human_action: Optional[str]
     # 全部轮次的工具调用审计记录，tool_exec_node 每轮追加（非覆盖）
     tool_calls: List[Dict[str, Any]]
     # 最终回复，generate_response_node 生成，可能是 LLM 写的也可能是人工覆盖的
@@ -96,8 +100,46 @@ class AgentState(TypedDict):
     metadata: Dict[str, Any]
     # 节点执行路径追踪，每个节点进入时 append 自己的名字，按执行顺序记录
     node_trace: Annotated[List[str], operator.add]
+    # 待确认的工单 offer，由 propose_ticket 工具触发，用户点「是」后才真正创建
+    ticket_offer: Optional[Dict[str, Any]]
 
-# 创建对话初始状态
+# 创建每轮对话输入（增量更新，配合 checkpointer 使用）
+def create_turn_input(
+    session_id: str,
+    user_id: str,
+    user_query: str,
+    ticket_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    构造本轮 Agent 输入（增量 patch，非全量重置）
+
+    只更新本轮变化的字段，其余字段由 checkpointer 从上一 checkpoint 继承。
+    会话过期后 checkpoint 已被清除，此时等同全新会话。
+
+    Args:
+        session_id: 会话 ID（= checkpointer thread_id）
+        user_id: 玩家 UID
+        user_query: 本轮用户原话
+        ticket_id: 关联工单 ID（可选）
+
+    Returns:
+        本轮 state patch
+    """
+    return {
+        # 玩家原话写入 messages，供同会话多轮 LLM 上下文使用
+        "messages": [HumanMessage(content=user_query)],
+        "user_query": user_query,
+        "user_id": user_id,
+        "session_id": session_id,
+        "ticket_id": ticket_id,
+        # 每轮 ReAct 工具审计重新开始
+        "tool_calls": [],
+        # 每轮运行时 metadata 重置，不跨轮携带
+        "metadata": {},
+    }
+
+
+# 创建对话初始状态（仅用于测试或无 checkpointer 的场景）
 def create_initial_state(
     session_id: str,
     user_id: str,
@@ -106,17 +148,9 @@ def create_initial_state(
     metadata: Optional[Dict[str, Any]] = None,
 ) -> AgentState:
     """
-    创建初始状态
+    创建完整初始状态（测试 / 无 checkpointer 场景用）
 
-    Args:
-        session_id: 会话ID
-        user_id: 玩家游戏UID
-        user_query: 用户初始问题
-        ticket_id: 关联的工单ID（可选）
-        metadata: 上一轮的元数据，多轮对话时传入保留
-
-    Returns:
-        初始化的AgentState
+    生产路径请用 create_turn_input + checkpointer。
     """
     return {
         "messages": [],
@@ -127,8 +161,11 @@ def create_initial_state(
         "interrupt_info": None,
         "human_review": None,
         "human_reply": None,
+        "human_mode": False,
+        "human_action": None,
         "tool_calls": [],
         "final_response": None,
+        "ticket_offer": None,
         "node_trace": [],
         "metadata": metadata or {
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -138,6 +175,4 @@ def create_initial_state(
 
 
 # TODO: 未来扩展
-# - 添加多轮对话的token计数
-# - 添加用户画像（VIP等级等）
-# - 添加上下文窗口管理（截断策略）
+# - 添加上下文窗口截断（同会话 messages 过长时）
