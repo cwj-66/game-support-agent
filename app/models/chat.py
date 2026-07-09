@@ -7,6 +7,13 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 
+class TicketOffer(BaseModel):
+    """工单创建确认请求，前端展示「是/否」按钮"""
+    summary: str = Field(..., description="问题摘要，展示给用户确认")
+    issue_type: str = Field(..., description="问题类型：account_ban/payment/bug/other")
+    display_text: str = Field(default="是否为您生成工单？", description="展示文案")
+
+
 class ChatRequest(BaseModel):
     """
     对话请求模型
@@ -67,6 +74,10 @@ class ChatResponse(BaseModel):
     sources: Optional[List[Dict[str, Any]]] = Field(
         default=None,
         description="知识来源引用"
+    )
+    ticket_offer: Optional[TicketOffer] = Field(
+        default=None,
+        description="工单确认请求，非 None 时前端展示「是/否」按钮"
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
