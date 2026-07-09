@@ -125,6 +125,10 @@ class Settings(BaseSettings):
         default=None,
         description="Redis 密码",
     )
+    SESSION_TTL_SECONDS: int = Field(
+        default=7200,
+        description="客服会话 TTL（秒），默认 2 小时无活动后会话过期，下次消息开新线程",
+    )
 
     # 数据库配置
     DB_PATH: str = Field(
