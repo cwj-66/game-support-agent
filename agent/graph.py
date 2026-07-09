@@ -7,7 +7,7 @@ from typing import Literal, Dict, Any, Optional, AsyncGenerator
 
 from langgraph.graph import StateGraph, END
 
-from .state import AgentState, create_initial_state
+from .state import AgentState, create_turn_input
 from .nodes import (
     reasoning_node,
     tool_exec_node,
@@ -37,6 +37,17 @@ async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "gener
                 return "tool_exec"
             break
     return "generate"
+
+
+def route_from_human(state: AgentState) -> Literal["human", "finish"]:
+    """
+    human 节点路由
+    - human_action == "close" → finish（客服结束接待）
+    - 其余（continue 或玩家消息）→ human（再次挂起等待）
+    """
+    if state.get("human_action") == "close":
+        return "finish"
+    return "human"
 
 
 async def route_from_tool_exec(state: AgentState) -> Literal["reasoning", "human_handoff"]:
@@ -80,7 +91,11 @@ workflow.add_edge("generate", "detector")
 
 workflow.add_edge("detector", "finish")
 
-workflow.add_edge("human", "finish")
+workflow.add_conditional_edges(
+    "human",
+    route_from_human,
+    {"human": "human", "finish": "finish"},
+)
 workflow.add_edge("human_handoff", "human")
 workflow.add_edge("finish", END)
 
@@ -136,38 +151,26 @@ async def run_agent(
     Returns:
         最终执行结果
     """
-    # 尝试读取上一轮的 metadata，保留给下一轮
-    prev_metadata: dict | None = None
-    try:
-        cp = await get_checkpointer()
-        cfg = {
-            "configurable": {
-                "thread_id": thread_id or session_id,
-                "checkpoint_ns": "game_support_agent",
-            }
-        }
-        checkpoint_tuple = await cp.aget_tuple(cfg)
-        if checkpoint_tuple is not None:
-            cv = checkpoint_tuple.checkpoint.get("channel_values", {})
-            prev_metadata = cv.get("metadata")
-    except Exception:
-        pass  # 首次对话或无 checkpoint 时静默跳过
+    from app.core.session_store import expire_session_if_needed
 
-    initial_state = create_initial_state(
+    thread = thread_id or session_id
+    # 2 小时无活动 → 清除 checkpoint，等同新会话
+    await expire_session_if_needed(thread)
+
+    turn_input = create_turn_input(
         session_id, user_id, user_query,
         ticket_id=ticket_id,
-        metadata=prev_metadata,
     )
 
     config = {
         "configurable": {
-            "thread_id": thread_id or session_id,
+            "thread_id": thread,
             "checkpoint_ns": "game_support_agent",
         }
     }
 
     g = await get_graph()
-    result = await g.ainvoke(initial_state, config)
+    result = await g.ainvoke(turn_input, config)
 
     # 提取节点执行路径
     node_trace = result.get("node_trace", [])
@@ -197,6 +200,7 @@ async def run_agent(
         "has_interrupt": raw_interrupt is not None,
         "__interrupt__": interrupt_payload,
         "node_trace": node_trace,
+        "ticket_offer": result.get("ticket_offer"),
     }
 
 
@@ -213,38 +217,25 @@ async def stream_agent(
     每个 chunk 格式：{"node_name": {state_updates}}
     供 SSE 接口逐步推送给前端
     """
-    # 尝试读取上一轮的 metadata，保留给下一轮
-    prev_metadata: dict | None = None
-    try:
-        cp = await get_checkpointer()
-        cfg = {
-            "configurable": {
-                "thread_id": thread_id or session_id,
-                "checkpoint_ns": "game_support_agent",
-            }
-        }
-        checkpoint_tuple = await cp.aget_tuple(cfg)
-        if checkpoint_tuple is not None:
-            cv = checkpoint_tuple.checkpoint.get("channel_values", {})
-            prev_metadata = cv.get("metadata")
-    except Exception:
-        pass
+    from app.core.session_store import expire_session_if_needed
 
-    initial_state = create_initial_state(
+    thread = thread_id or session_id
+    await expire_session_if_needed(thread)
+
+    turn_input = create_turn_input(
         session_id, user_id, user_query,
         ticket_id=ticket_id,
-        metadata=prev_metadata,
     )
 
     config = {
         "configurable": {
-            "thread_id": thread_id or session_id,
+            "thread_id": thread,
             "checkpoint_ns": "game_support_agent",
         }
     }
 
     g = await get_graph()
-    async for chunk in g.astream(initial_state, config, stream_mode="updates"):
+    async for chunk in g.astream(turn_input, config, stream_mode="updates"):
         yield chunk
 
 
