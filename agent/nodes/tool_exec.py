@@ -44,8 +44,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     tool_messages: List[ToolMessage] = []
     tool_call_records: List[Dict[str, Any]] = []
     metadata = state.get("metadata", {})
-    # 记录本次执行中是否有创建工单，供 state.ticket_id 更新
-    _new_ticket_id: str | None = None
 
     # 计算已执行的 ReAct 轮次
     prev_tool_calls = state.get("tool_calls", [])
@@ -66,8 +64,26 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             "node_trace": ["tool_exec"],
         }
 
-    # 检查是否包含 request_human_escalation → 跳过所有工具，直接升等
+    # 检查特殊工具：propose_ticket（生成工单 offer）或 request_human_escalation（转人工）
     for tc in last_ai.tool_calls:
+        if tc["name"] == "propose_ticket":
+            issue_type = tc["args"].get("issue_type", "other")
+            summary = tc["args"].get("summary", "")
+            metadata["ticket_offer_pending"] = True
+            return {
+                "ticket_offer": {
+                    "issue_type": issue_type,
+                    "summary": summary,
+                },
+                "messages": [ToolMessage(
+                    content="已生成工单确认选项，用户将看到「是/否」按钮。请生成一条自然的过渡回复，告知用户问题已整理完毕，等待其确认是否需要创建工单。",
+                    name="propose_ticket",
+                    tool_call_id=tc["id"],
+                )],
+                "metadata": metadata,
+                "node_trace": ["tool_exec"],
+            }
+
         if tc["name"] == "request_human_escalation":
             reason = tc["args"].get("reason", "用户要求转人工")
             return {
@@ -108,7 +124,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
 
         # 重复调用检测：相同 tool + 相同 args 已在之前执行过，跳过执行
         is_duplicate = False
-        if tool_name in ("check_ticket", "lookup_account", "create_ticket"):
+        if tool_name in ("check_ticket", "lookup_account"):
             for prev_call in state.get("tool_calls", []):
                 if prev_call.get("tool") == tool_name and prev_call.get("input") == tool_args:
                     is_duplicate = True
@@ -145,32 +161,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                 except (json.JSONDecodeError, ValueError):
                     pass
 
-            # create_ticket：提取工单号，并附上工具调用上下文
-            if tool_name == "create_ticket":
-                try:
-                    data = json.loads(result_str)
-                    ticket_id_from_tool = data.get("ticket_id")
-                except (json.JSONDecodeError, ValueError):
-                    ticket_id_from_tool = None
-                if ticket_id_from_tool:
-                    _new_ticket_id = ticket_id_from_tool
-                    # 收集本轮及之前的工具调用记录（排除 create_ticket 自身）
-                    context_records = [
-                        r for r in state.get("tool_calls", [])
-                        if r.get("tool") != "create_ticket"
-                    ]
-                    for r in tool_call_records:
-                        if r.get("tool") != "create_ticket":
-                            context_records.append(r)
-                    try:
-                        from app.core.database import update_ticket
-                        update_ticket(
-                            ticket_id_from_tool,
-                            tool_context=json.dumps(simplify_tool_context(context_records), ensure_ascii=False),
-                        )
-                    except Exception:
-                        pass
-
             tool_messages.append(ToolMessage(
                 content=result_str,
                 name=tool_name,
@@ -191,12 +181,9 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
 
         tool_call_records.append(record)
 
-    result: Dict[str, Any] = {
+    return {
         "messages": tool_messages,
         "tool_calls": state.get("tool_calls", []) + tool_call_records,
         "metadata": metadata,
         "node_trace": ["tool_exec"],
     }
-    if _new_ticket_id is not None:
-        result["ticket_id"] = _new_ticket_id
-    return result

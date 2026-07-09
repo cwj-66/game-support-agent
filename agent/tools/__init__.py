@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 from .query_knowledge import create_knowledge_tool
 
 from .account import create_lookup_account
-from .ticket import create_ticket
+from .propose_ticket import propose_ticket
 from .ticket_status import create_check_ticket
 from .human_escalation import request_human_escalation
 
@@ -32,9 +32,9 @@ def simplify_tool_context(records: List[Dict[str, Any]]) -> List[Dict[str, str]]
         if isinstance(inp, dict):
             if tool == "lookup_account":
                 entry["args"] = inp.get("fields", "") or ""
-            elif tool == "create_ticket":
+            elif tool in ("create_ticket", "propose_ticket"):
                 issue = inp.get("issue_type", "")
-                desc = inp.get("description", "")
+                desc = inp.get("description", "") or inp.get("summary", "")
                 entry["args"] = f"{issue}: {desc[:60]}" if desc else issue
             elif tool == "query_knowledge":
                 entry["args"] = (inp.get("query", "") or "")[:80]
@@ -57,7 +57,7 @@ def simplify_tool_context(records: List[Dict[str, Any]]) -> List[Dict[str, str]]
                 if tool == "lookup_account":
                     parts = [data.get(k, "") for k in ("status", "ban_reason", "last_login") if data.get(k)]
                     entry["result"] = " | ".join(parts)[:120]
-                elif tool == "create_ticket":
+                elif tool in ("create_ticket", "propose_ticket"):
                     entry["result"] = f"工单 {data.get('ticket_id', '')} ({data.get('status', '')})"
                 elif tool == "query_knowledge":
                     entry["result"] = "有结果" if data.get("has_answer") else "无结果"
@@ -109,6 +109,6 @@ def get_all_tools(user_id: str = ""):
         create_knowledge_tool(),
         create_lookup_account(user_id),
         create_check_ticket(user_id),
-        create_ticket,
+        propose_ticket,
         escalation_tool,
     ]
