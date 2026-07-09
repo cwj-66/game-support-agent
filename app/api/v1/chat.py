@@ -6,11 +6,12 @@
 import time
 import json
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, AIMessage
 
 from app.core.config import get_settings, Settings
@@ -20,10 +21,12 @@ from app.models.chat import (
     ChatResponse,
     ChatHistoryResponse,
     ChatHistoryItem,
+    TicketOffer,
 )
-from agent.graph import run_agent, stream_agent
+from agent.graph import run_agent, stream_agent, get_graph
 from agent.checkpointer import get_checkpointer
-from app.core.pending_store import add_pending
+from app.core.pending_store import add_pending, get_pending, remove_pending
+from app.core.human_invoke import invoke_human_resume
 
 # 兼容不同版本 LangGraph 的 GraphInterrupt
 try:
@@ -86,6 +89,31 @@ async def send_message(
     """
     start_time = time.perf_counter()
 
+    # --- 人工接待中：pending 存在即走人工通道，不再跑 Agent ---
+    # 决策注释：interrupt 挂起时 graph_state.next 可能为空，不能依赖 next==("human",)
+    if await get_pending(request.session_id):
+        try:
+            await invoke_human_resume(
+                request.session_id,
+                {
+                    "source": "user",
+                    "message": request.message,
+                    "action": "continue",
+                },
+            )
+            execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+            return ChatResponse(
+                session_id=request.session_id,
+                status="under_review",
+                response="消息已发送，等待客服回复...",
+                requires_review=True,
+                review_id=request.session_id,
+                metadata={"execution_time_ms": execution_time_ms, "human_mode": True},
+            )
+        except Exception:
+            traceback.print_exc()
+            raise AgentExecutionException("人工接待消息发送失败，请稍后重试")
+
     try:
         result = await run_agent(
             session_id=request.session_id,
@@ -115,12 +143,23 @@ async def send_message(
             )
 
         final_response = result.get("final_response") or ""
+
+        # 检查是否有工单确认请求
+        raw_offer = result.get("ticket_offer")
+        ticket_offer_obj = None
+        if raw_offer and isinstance(raw_offer, dict):
+            ticket_offer_obj = TicketOffer(
+                summary=raw_offer.get("summary", ""),
+                issue_type=raw_offer.get("issue_type", "other"),
+            )
+
         return ChatResponse(
             session_id=request.session_id,
             response=final_response,
             requires_review=False,
             review_id=None,
             sources=result.get("metadata", {}).get("sources"),
+            ticket_offer=ticket_offer_obj,
             metadata={
                 "execution_time_ms": execution_time_ms,
             },
@@ -172,7 +211,7 @@ async def get_chat_history(
     if checkpoint_tuple is None:
         # 尝试不带 checkpoint_ns 查询
         config_no_ns = {"configurable": {"thread_id": session_id}}
-        checkpoint_tuple = checkpointer.get_tuple(config_no_ns)
+        checkpoint_tuple = await checkpointer.aget_tuple(config_no_ns)
 
     if not checkpoint_tuple:
         raise SessionNotFoundException(session_id)
@@ -234,7 +273,7 @@ async def get_human_reply(session_id: str):
     checkpoint_tuple = await checkpointer.aget_tuple(config)
     if checkpoint_tuple is None:
         config_no_ns = {"configurable": {"thread_id": session_id}}
-        checkpoint_tuple = checkpointer.get_tuple(config_no_ns)
+        checkpoint_tuple = await checkpointer.aget_tuple(config_no_ns)
 
     if checkpoint_tuple is None:
         return {"status": "pending"}
@@ -242,23 +281,65 @@ async def get_human_reply(session_id: str):
     channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
     messages = channel_values.get("messages", [])
 
-    # 找最后一条 AIMessage，检查是否有 human_source 标记
+    # 找最后一条带 human_source 标记的 AIMessage
     for msg in reversed(messages):
         if isinstance(msg, AIMessage):
             kwargs = msg.additional_kwargs or {}
-            msg_metadata = msg.metadata or {}
-            if kwargs.get("human_source") or msg_metadata.get("human_source"):
+            if kwargs.get("human_source"):
                 reply = msg.content if isinstance(msg.content, str) else str(msg.content)
-                return {"status": "completed", "reply": reply}
+                # human_active：会话是否仍在人工接待中（pending 未移除）
+                human_active = await get_pending(session_id) is not None
+
+                # --- 超时检测逻辑（1分钟提醒，5分钟结束） ---
+                if human_active:
+                    ts_str = kwargs.get("timestamp")
+                    if ts_str:
+                        try:
+                            last_time = datetime.fromisoformat(ts_str)
+                            elapsed = (datetime.now(timezone.utc) - last_time).total_seconds()
+                            is_warning = "如果5分钟未回复" in reply
+
+                            if is_warning and elapsed > 240:  # 提醒后又过了4分钟（总计5分钟）
+                                resume_payload = {
+                                    "source": "agent",
+                                    "message": "【系统提示】由于您长时间未回复，本次人工服务已自动结束。如需帮助请重新提问。",
+                                    "action": "close",
+                                }
+                                await invoke_human_resume(session_id, resume_payload)
+                                await remove_pending(session_id)
+                                human_active = False
+                                reply = resume_payload["message"]
+                            elif not is_warning and elapsed > 60 and "由于您长时间未回复" not in reply:
+                                # 1分钟未回复，发送提醒
+                                resume_payload = {
+                                    "source": "agent",
+                                    "message": "【系统提示】您好，请问还在吗？如果5分钟未回复，我们将结束本次会话。",
+                                    "action": "continue"
+                                }
+                                await invoke_human_resume(session_id, resume_payload)
+                                reply = resume_payload["message"]
+                        except Exception:
+                            pass
+
+                return {
+                    "status": "completed",
+                    "reply": reply,
+                    "human_active": human_active,
+                }
             break
 
     # 兜底：直接检查 human_reply 字段（兼容旧数据）
     human_reply = channel_values.get("human_reply")
     final_response = channel_values.get("final_response") or ""
     if human_reply and final_response:
-        return {"status": "completed", "reply": final_response}
+        human_active = await get_pending(session_id) is not None
+        return {
+            "status": "completed",
+            "reply": final_response,
+            "human_active": human_active,
+        }
 
-    return {"status": "pending"}
+    return {"status": "pending", "human_active": await get_pending(session_id) is not None}
 
 
 # ──────────────────────────────────────────────
@@ -325,6 +406,101 @@ async def stream_chat(
         event_generator(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+class TicketConfirmRequest(BaseModel):
+    session_id: str
+    confirmed: bool  # True=点了「是」，False=点了「否」
+
+
+class TicketConfirmResponse(BaseModel):
+    status: str  # created / cancelled
+    ticket_id: str | None = None
+    estimated_response: str | None = None
+    issue_type: str | None = None
+    summary: str | None = None
+
+
+@router.post("/ticket-confirm", response_model=TicketConfirmResponse)
+async def confirm_ticket_offer(request: TicketConfirmRequest) -> TicketConfirmResponse:
+    """
+    处理工单创建确认
+
+    用户点击前端「是」/「否」按钮后调用此接口：
+    - confirmed=True  → 创建工单，并将结果写入 checkpoint messages
+    - confirmed=False → 写入取消记录到 checkpoint
+    """
+    from app.core.checkpoint_helper import append_agent_reply, graph_config
+
+    checkpointer = await get_checkpointer()
+    config = graph_config(request.session_id)
+    checkpoint_tuple = await checkpointer.aget_tuple(config)
+
+    if checkpoint_tuple is None:
+        checkpoint_tuple = await checkpointer.aget_tuple(
+            {"configurable": {"thread_id": request.session_id}}
+        )
+
+    if checkpoint_tuple is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
+    ticket_offer = channel_values.get("ticket_offer")
+    if not ticket_offer:
+        raise HTTPException(status_code=400, detail="无待确认的工单请求")
+
+    if not request.confirmed:
+        await append_agent_reply(
+            request.session_id,
+            "好的，已取消工单创建。如需帮助随时告知。",
+            ticket_offer=None,
+        )
+        return TicketConfirmResponse(status="cancelled")
+
+    user_id = channel_values.get("user_id", "")
+    tool_calls = channel_values.get("tool_calls", [])
+
+    from app.core.ticket_service import create_ticket_core
+    result = create_ticket_core(
+        user_id=user_id,
+        issue_type=ticket_offer.get("issue_type", "other"),
+        description=ticket_offer.get("summary", ""),
+    )
+
+    ticket_id = result.get("ticket_id")
+    estimated = result.get("estimated_response", "3-5 个工作日")
+
+    if ticket_id and tool_calls:
+        try:
+            from app.core.database import update_ticket
+            from agent.tools import simplify_tool_context
+            update_ticket(
+                ticket_id,
+                tool_context=json.dumps(simplify_tool_context(tool_calls), ensure_ascii=False),
+            )
+        except Exception:
+            pass
+
+    # 写入 checkpoint，让 Agent 会话内记忆包含建单结果
+    reply_text = (
+        f"✅ 工单已创建！工单号：{ticket_id}，预计处理时间：{estimated}"
+        if ticket_id
+        else "工单创建失败，请稍后重试。"
+    )
+    await append_agent_reply(
+        request.session_id,
+        reply_text,
+        ticket_id=ticket_id,
+        ticket_offer=None,
+    )
+
+    return TicketConfirmResponse(
+        status="created",
+        ticket_id=ticket_id,
+        estimated_response=estimated,
+        issue_type=ticket_offer.get("issue_type"),
+        summary=ticket_offer.get("summary"),
     )
 
 
