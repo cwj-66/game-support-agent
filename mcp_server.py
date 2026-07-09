@@ -2,7 +2,8 @@
 MCP Server — 客服工具服务
 
 职责：注册并暴露客服工具给 MCP Client（LangGraph 侧）。
-暴露 4 个工具：create_ticket / check_ticket / lookup_account / query_knowledge
+暴露 3 个工具：check_ticket / lookup_account / query_knowledge
+注意：create_ticket 已移除，工单创建改为 propose_ticket → 前端确认 → /chat/ticket-confirm 三步流程
 
 业务逻辑统一在 app/core/ticket_service.py 和 app/core/account_service.py，
 此处只做 MCP 注册（@mcp.tool 装饰器）和 Docstring 声明。
@@ -28,29 +29,7 @@ if _ROOT not in sys.path:
 mcp = FastMCP("customer-service")
 
 
-# ─── 工具 1：创建工单 ────────────────────────────────────────────────
-
-@mcp.tool()
-def create_ticket(user_id: str, issue_type: str, description: str) -> dict:
-    """为玩家创建客服工单，适用于需要后台异步处理的问题（封禁申诉、支付退款、Bug 反馈等）。
-    创建工单后直接结束对话，无需同时触发升人工。
-
-    issue_type 枚举值：
-    - account_ban：账号封禁申诉
-    - payment：充值/退款问题
-    - bug：游戏 bug 反馈
-    - other：其他问题
-
-    Args:
-        user_id: 玩家 UID
-        issue_type: 问题类型，见上方枚举值
-        description: 问题描述
-    """
-    from app.core.ticket_service import create_ticket_core
-    return create_ticket_core(user_id, issue_type, description)
-
-
-# ─── 工具 2：查询工单 ────────────────────────────────────────────────
+# ─── 工具 1：查询工单 ────────────────────────────────────────────────
 
 @mcp.tool()
 def check_ticket(user_id: str, ticket_id: str = "") -> dict:
@@ -68,7 +47,7 @@ def check_ticket(user_id: str, ticket_id: str = "") -> dict:
     return check_ticket_core(user_id, ticket_id)
 
 
-# ─── 工具 3：查询账号状态 ─────────────────────────────────────────────
+# ─── 工具 2：查询账号状态 ─────────────────────────────────────────────
 
 @mcp.tool()
 def lookup_account(user_id: str, fields: str = "") -> dict:
@@ -86,7 +65,7 @@ def lookup_account(user_id: str, fields: str = "") -> dict:
     return lookup_account_core(user_id, fields)
 
 
-# ─── 工具 4：查询知识库 ───────────────────────────────────────────────
+# ─── 工具 3：查询知识库 ───────────────────────────────────────────────
 
 @mcp.tool()
 async def query_knowledge(question: str) -> dict:
