@@ -6,8 +6,8 @@ Agent 测试
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from agent.state import AgentState, create_initial_state, InterruptInfo, HumanReviewResult
-from langchain_core.messages import AIMessage, ToolMessage
+from agent.state import AgentState, create_initial_state, create_turn_input, InterruptInfo, HumanReviewResult
+from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 
 
 class TestAgentState:
@@ -28,6 +28,18 @@ class TestAgentState:
         assert state["final_response"] is None
         assert state["node_trace"] == []
         assert "metadata" in state
+
+    def test_create_turn_input(self):
+        """测试每轮增量输入：玩家原话写入 messages"""
+        turn = create_turn_input("session_123", "uid_001", "帮我查账号")
+
+        assert turn["session_id"] == "session_123"
+        assert turn["user_query"] == "帮我查账号"
+        assert len(turn["messages"]) == 1
+        assert isinstance(turn["messages"][0], HumanMessage)
+        assert turn["messages"][0].content == "帮我查账号"
+        assert turn["tool_calls"] == []
+        assert turn["metadata"] == {}
 
     def test_state_with_interrupt_info(self):
         """测试带中断信息的状态"""
