@@ -1,18 +1,18 @@
 """
-LangGraph 状态持久化配置 — RedisSaver
+LangGraph 状态持久化配置 — AsyncRedisSaver
 
-用 Redis 替代 SQLite 存储 Agent 执行状态（messages、中断点等）。
-RedisSaver 支持同步/异步双模式，共享同一连接实例。
+用 AsyncRedisSaver 替代 RedisSaver，以支持 FastAPI async 接口的异步调用。
+0.4.x 版本的 RedisSaver.aget_tuple 未实现，必须使用 AsyncRedisSaver。
 """
 
 import logging
 from typing import Optional
 
-from langgraph.checkpoint.redis import RedisSaver
+from langgraph.checkpoint.redis import AsyncRedisSaver
 
 logger = logging.getLogger(__name__)
 
-_saver: Optional[RedisSaver] = None
+_saver: Optional[AsyncRedisSaver] = None
 
 
 def _get_redis_config() -> tuple[str, str | None]:
@@ -27,7 +27,7 @@ def _get_redis_config() -> tuple[str, str | None]:
 
 
 async def init_checkpointer() -> None:
-    """初始化 RedisSaver（应用启动时调用）"""
+    """初始化 AsyncRedisSaver（应用启动时调用）"""
     global _saver
     if _saver is not None:
         return
@@ -35,32 +35,33 @@ async def init_checkpointer() -> None:
     redis_url, password = _get_redis_config()
     try:
         conn_args = {"password": password} if password else {}
-        _saver = RedisSaver(redis_url=redis_url, connection_args=conn_args)
-        _saver.setup()
-        logger.info("RedisSaver initialized — Agent state in Redis (%s)", redis_url)
+        _saver = AsyncRedisSaver(redis_url=redis_url, connection_args=conn_args)
+        # 0.4.x AsyncRedisSaver 用 asetup() 做异步初始化（创建索引等）
+        await _saver.asetup()
+        logger.info("AsyncRedisSaver initialized — Agent state in Redis (%s)", redis_url)
     except Exception as exc:
         logger.critical(
-            "RedisSaver init failed — is Redis running at %s? %s", redis_url, exc
+            "AsyncRedisSaver init failed — is Redis running at %s? %s", redis_url, exc
         )
         raise
 
 
-async def get_checkpointer() -> RedisSaver:
-    """获取 RedisSaver（用于 async invoke / astream）"""
+async def get_checkpointer() -> AsyncRedisSaver:
+    """获取 AsyncRedisSaver（用于 async invoke / astream）"""
     if _saver is None:
         await init_checkpointer()
     return _saver
 
 
-def get_sync_checkpointer() -> RedisSaver:
+def get_sync_checkpointer() -> AsyncRedisSaver:
     """
-    获取 RedisSaver（用于同步 invoke / Command resume）
+    获取 AsyncRedisSaver（用于同步 invoke / Command resume）
 
-    RedisSaver 自动支持 sync / async 两种操作模式，返回同一实例。
+    AsyncRedisSaver 同时支持同步和异步操作，返回同一实例。
     """
     if _saver is None:
         raise RuntimeError(
-            "RedisSaver not initialized. Ensure FastAPI startup completed "
+            "AsyncRedisSaver not initialized. Ensure FastAPI startup completed "
             "or Redis is reachable."
         )
     return _saver
