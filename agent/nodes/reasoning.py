@@ -5,7 +5,7 @@ LLM 通过 bind_tools 主动决定调用哪个工具，或直接生成回复
 
 from typing import Dict, Any
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, AIMessage
 from langchain_openai import ChatOpenAI
 
 from ..state import AgentState
@@ -40,12 +40,11 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     LLM 收到用户问题后可以：
     - 调用 query_knowledge 查询游戏知识库
     - 调用 lookup_account 查询玩家账号状态（按需传 fields 参数）
-    - 调用 create_ticket 创建客服工单
+    - 调用 propose_ticket 向用户提出工单创建建议（不直接创建）
     - 直接输出回答（不调用任何工具）
 
     工具结果会追加到 messages，LLM 可多轮循环调用直到给出最终回复。
     """
-    user_query = state["user_query"]
     user_id = state.get("user_id", "")
     history = state.get("messages", [])
     metadata = state.get("metadata", {})
@@ -53,14 +52,35 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     system_prompt = GAME_SUPPORT_SYSTEM_PROMPT
     if user_id:
         system_prompt += f"\n\n当前玩家 UID：{user_id}"
+        # 注入跨会话长期记忆摘要（非当前对话原文）
+        try:
+            from app.core.long_term_memory import format_memory_prompt_block
+            memory_block = await format_memory_prompt_block(user_id)
+            if memory_block:
+                system_prompt += f"\n\n{memory_block}"
+        except Exception:
+            pass
 
+    # history 已含本轮 HumanMessage（由 create_turn_input 写入），不再重复追加
     llm_messages = [
         SystemMessage(content=system_prompt),
         *history,
-        HumanMessage(content=user_query),
     ]
 
     llm = _build_llm_from_settings()
+
+    # propose_ticket 已提出 → 去掉工具，让 LLM 生成自然的过渡告知语
+    if metadata.get("ticket_offer_pending"):
+        metadata.pop("ticket_offer_pending", None)
+        try:
+            response: AIMessage = await llm.ainvoke(llm_messages)
+        except Exception as exc:
+            response = AIMessage(content="好的，已为您整理了问题详情，请稍后确认是否需要创建工单。")
+        return {
+            "messages": [response],
+            "metadata": metadata,
+            "node_trace": ["reasoning"],
+        }
 
     # 重复工具调用 → 摘掉工具，强制生成最终回复
     if metadata.get("tool_repeated_call"):
