@@ -4,6 +4,7 @@ import './ChatPage.css'
 
 const POLL_INTERVAL = 3000
 const POLL_TIMEOUT = 5 * 60 * 1000
+const SEND_TIMEOUT = 90 * 1000
 
 /** 每次刷新页面生成新会话 ID，避免复用旧 pending/人工状态 */
 const createSessionId = () => `test_${Date.now()}`
@@ -19,8 +20,10 @@ function ChatPage() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [humanMode, setHumanMode] = useState(false)
-  const [ticketOffer, setTicketOffer] = useState(null)  // { summary, issue_type, display_text }
+  const [ticketOffer, setTicketOffer] = useState(null)
+  const [humanOffer, setHumanOffer] = useState(null)
   const [ticketConfirming, setTicketConfirming] = useState(false)
+  const [humanConfirming, setHumanConfirming] = useState(false)
 
   const pollTimerRef = useRef(null)
   const pollStartRef = useRef(null)
@@ -42,7 +45,6 @@ function ChatPage() {
 
   useEffect(() => () => clearPolling(), [])
 
-  // 人工接待期间后台轮询，接收客服主动发来的新消息
   useEffect(() => {
     if (!humanMode) return undefined
 
@@ -121,7 +123,6 @@ function ChatPage() {
         if (!res.ok) return
 
         const data = await res.json()
-        // 多轮人工：只有收到「新」回复才结束等待
         if (data.status === 'completed' && data.reply !== lastSeen) {
           clearPolling()
           lastHumanReplyRef.current = data.reply
@@ -131,7 +132,7 @@ function ChatPage() {
           }
         }
       } catch {
-        // 单次轮询失败静默忽略
+        // 静默忽略
       }
     }
 
@@ -159,6 +160,9 @@ function ChatPage() {
     setSending(true)
 
     try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), SEND_TIMEOUT)
+
       const res = await fetch('http://localhost:8002/api/v1/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -167,40 +171,40 @@ function ChatPage() {
           user_id: 'user_001',
           message: text,
         }),
+        signal: controller.signal,
       })
+      clearTimeout(timeoutId)
 
       if (!res.ok) throw new Error('request failed')
 
       const data = await res.json()
 
-      if (data.status === 'under_review') {
+      if (data.status === 'human_chat' || humanMode) {
         setHumanMode(true)
-        const waitMsg = humanMode
-          ? '消息已发送，等待客服回复...'
-          : '已转人工客服，请稍候...'
-        updateAgentMsg(thinkingId, waitMsg, true, true)
-        startPolling(thinkingId, lastHumanReplyRef.current)
-        return
-      }
-
-      // 人工模式下不应收到 AI 回复，兜底继续等待客服
-      if (humanMode) {
         updateAgentMsg(thinkingId, '消息已发送，等待客服回复...', true, true)
         startPolling(thinkingId, lastHumanReplyRef.current)
         return
       }
 
-      // 人工接待结束后，回到 AI 模式
       setHumanMode(false)
       lastHumanReplyRef.current = ''
-      updateAgentMsg(thinkingId, data.response, false, false)
+      updateAgentMsg(thinkingId, data.response || '（无回复内容）', false, false)
 
-      // 有工单 offer → 展示确认按钮
       if (data.ticket_offer) {
         setTicketOffer(data.ticket_offer)
       }
-    } catch {
-      updateAgentMsg(thinkingId, '请求失败，请检查后端是否启动', false)
+      if (data.human_offer) {
+        setHumanOffer(data.human_offer)
+      }
+    } catch (err) {
+      const isTimeout = err?.name === 'AbortError'
+      updateAgentMsg(
+        thinkingId,
+        isTimeout
+          ? '响应超时，请确认后端已重启后重试'
+          : '请求失败，请检查后端是否启动',
+        false,
+      )
     } finally {
       setSending(false)
     }
@@ -235,6 +239,48 @@ function ChatPage() {
       ])
     } finally {
       setTicketConfirming(false)
+    }
+  }
+
+  const handleHumanConfirm = async (confirmed) => {
+    setHumanConfirming(true)
+    try {
+      const res = await fetch('http://localhost:8002/api/v1/chat/human-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, confirmed }),
+      })
+      const data = await res.json()
+      setHumanOffer(null)
+
+      if (confirmed && data.status === 'entered') {
+        setHumanMode(true)
+        const enterMsg = '已为您转接人工客服，请稍候，客服将尽快回复您。'
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now(), role: 'agent', content: enterMsg, isHuman: true },
+        ])
+        lastHumanReplyRef.current = enterMsg
+        return
+      }
+
+      const resultMsg =
+        confirmed
+          ? '转人工失败，请稍后重试'
+          : '好的，已取消转人工。如需帮助随时告知。'
+
+      setMessages((prev) => [
+        ...prev,
+        { id: Date.now(), role: 'agent', content: resultMsg },
+      ])
+    } catch {
+      setHumanOffer(null)
+      setMessages((prev) => [
+        ...prev,
+        { id: Date.now(), role: 'agent', content: '操作失败，请稍后重试' },
+      ])
+    } finally {
+      setHumanConfirming(false)
     }
   }
 
@@ -273,6 +319,37 @@ function ChatPage() {
               </div>
             </div>
           ))}
+          {humanOffer && (
+            <div className="message-item agent">
+              <div className="message-bubble ticket-offer">
+                <div style={{ marginBottom: 8 }}>
+                  <strong>{humanOffer.display_text || '是否为你转人工？'}</strong>
+                </div>
+                {humanOffer.summary && (
+                  <div style={{ fontSize: 13, color: '#555', marginBottom: 10 }}>
+                    问题摘要：{humanOffer.summary}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Button
+                    type="primary"
+                    size="small"
+                    loading={humanConfirming}
+                    onClick={() => handleHumanConfirm(true)}
+                  >
+                    是
+                  </Button>
+                  <Button
+                    size="small"
+                    disabled={humanConfirming}
+                    onClick={() => handleHumanConfirm(false)}
+                  >
+                    否
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
           {ticketOffer && (
             <div className="message-item agent">
               <div className="message-bubble ticket-offer">
