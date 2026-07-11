@@ -1,0 +1,71 @@
+.player-layout {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.player-header {
+  background: linear-gradient(135deg, #4f6ef7 0%, #6c8cff 50%, #8b5cf6 100%);
+  box-shadow: 0 2px 12px rgba(79, 110, 247, 0.25);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.player-header-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.player-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+
+.player-title::before {
+  content: '🎮 ';
+}
+
+.player-nav {
+  display: flex;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  padding: 4px;
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+}
+
+.player-nav-link {
+  padding: 6px 18px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s, color 0.2s;
+}
+
+.player-nav-link:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.player-nav-link.active {
+  color: var(--primary);
+  background: #fff;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.player-main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+}

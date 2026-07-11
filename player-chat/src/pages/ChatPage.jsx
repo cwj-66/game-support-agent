@@ -1,17 +1,43 @@
 import { useState, useRef, useEffect } from 'react'
 import { Input, Button, Card, Spin, Tag } from 'antd'
+import { API_BASE } from '../config'
 import './ChatPage.css'
 
 const POLL_INTERVAL = 3000
-const POLL_TIMEOUT = 5 * 60 * 1000
 const SEND_TIMEOUT = 90 * 1000
+const DEV_USER_ID = '10001'
 
-/** 每次刷新页面生成新会话 ID，避免复用旧 pending/人工状态 */
-const createSessionId = () => `test_${Date.now()}`
+/** 每次刷新页面生成新会话 ID，格式须为 {user_id}_{随机串} */
+const createSessionId = () => `${DEV_USER_ID}_${Date.now()}`
 
+/** 根据 HTTP 状态码返回可读错误信息 */
+const getHttpErrorMessage = (status) => {
+  if (status === 401) return '鉴权失败，请确认后端已开启 DEBUG=true 开发模式'
+  if (status === 403) return '无权访问该会话，请刷新页面重试'
+  if (status >= 500) return '服务端错误，请稍后重试'
+  return '请求失败，请检查后端是否启动'
+}
+
+const DEFAULT_REPLY = '很抱歉没能为您解决问题，您可以继续向我求助。'
+const HUMAN_OFFER_REPLY =
+  '很抱歉没能为您解决问题。您可通过下方按钮确认是否转接人工客服，也可以继续向我求助。'
+const TICKET_OFFER_REPLY =
+  '很抱歉没能为您解决问题。您可通过下方按钮确认是否创建工单，也可以继续向我求助。'
+
+const resolveDisplayReply = (data) => {
+  if (data.response?.trim()) return data.response
+  if (data.human_offer) return HUMAN_OFFER_REPLY
+  if (data.ticket_offer) return TICKET_OFFER_REPLY
+  return DEFAULT_REPLY
+}
+
+/** 进入聊天时的客服开场白 */
 const INITIAL_MESSAGES = [
-  { id: 1, role: 'user', content: '你好，我想查一下账号状态' },
-  { id: 2, role: 'agent', content: '您好！请提供您的游戏 UID，我帮您查询。' },
+  {
+    id: 1,
+    role: 'agent',
+    content: '您好！我是游戏客服助手，可以帮您查询攻略、账号状态、工单进度等。请问有什么可以帮您？',
+  },
 ]
 
 function ChatPage() {
@@ -25,71 +51,107 @@ function ChatPage() {
   const [ticketConfirming, setTicketConfirming] = useState(false)
   const [humanConfirming, setHumanConfirming] = useState(false)
 
-  const pollTimerRef = useRef(null)
-  const pollStartRef = useRef(null)
-  const lastHumanReplyRef = useRef('')
+  // 已消费的历史消息总数，用于增量拉取（包含 user + assistant 全量）
+  const seenHistoryCountRef = useRef(0)
+  // 当前等待中的"思考气泡" ID，轮询到回复后用来替换
+  const loadingMsgIdRef = useRef(null)
   const listEndRef = useRef(null)
-  const messagesRef = useRef(messages)
 
-  useEffect(() => {
-    messagesRef.current = messages
-  }, [messages])
-
-  const clearPolling = () => {
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current)
-      pollTimerRef.current = null
+  /** 进入人工模式前，先拉一次当前历史作为基线，再设 humanMode */
+  const enterHumanMode = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/chat/history/${sessionId}`)
+      if (res.ok) {
+        const data = await res.json()
+        seenHistoryCountRef.current = data.total || 0
+      }
+    } catch {
+      // 静默忽略，从 0 开始也无妨（最多重复展示历史）
     }
-    pollStartRef.current = null
+    setHumanMode(true)
   }
 
-  useEffect(() => () => clearPolling(), [])
+  useEffect(() => () => {
+    // 组件卸载时无需特殊清理，interval 在下方 useEffect 里管理
+  }, [])
 
+  /**
+   * 人工模式轮询历史（增量）
+   * 每 3s 拉 /chat/history，找出 seenHistoryCountRef 之后的 is_human 新消息
+   * 同时用 /chat/reply 检测 human_active 是否已变 false
+   */
   useEffect(() => {
     if (!humanMode) return undefined
 
-    const timer = setInterval(async () => {
-      const hasLoading = messagesRef.current.some((m) => m.loading)
-      if (hasLoading) return
-
+    const poll = async () => {
       try {
-        const res = await fetch(
-          `http://localhost:8002/api/v1/chat/reply/${sessionId}`,
-        )
+        // 1. 拉全量历史
+        const res = await fetch(`${API_BASE}/chat/history/${sessionId}`)
         if (!res.ok) return
         const data = await res.json()
-        if (
-          data.status === 'completed' &&
-          data.reply &&
-          data.reply !== lastHumanReplyRef.current
-        ) {
-          lastHumanReplyRef.current = data.reply
+        const allMsgs = data.messages || []
+
+        // 2. 取出新增的人工客服消息
+        const newHumanMsgs = allMsgs
+          .slice(seenHistoryCountRef.current)
+          .filter((m) => m.role === 'assistant' && m.is_human)
+
+        // 3. 推进基线（不管有没有 human 消息都要推，避免计入 user 消息）
+        seenHistoryCountRef.current = allMsgs.length
+
+        if (newHumanMsgs.length > 0) {
           setMessages((prev) => {
-            const last = prev[prev.length - 1]
-            if (last?.role === 'agent' && last.content === data.reply) {
-              return prev
+            let updated = [...prev]
+            for (const m of newHumanMsgs) {
+              const loadingIdx = loadingMsgIdRef.current
+                ? updated.findIndex((msg) => msg.id === loadingMsgIdRef.current)
+                : -1
+              if (loadingIdx !== -1) {
+                // 替换第一个 loading 气泡
+                updated[loadingIdx] = {
+                  ...updated[loadingIdx],
+                  content: m.content,
+                  loading: false,
+                  isHuman: true,
+                }
+                loadingMsgIdRef.current = null
+              } else {
+                updated.push({
+                  id: Date.now() + Math.random(),
+                  role: 'agent',
+                  content: m.content,
+                  isHuman: true,
+                })
+              }
             }
-            return [
-              ...prev,
-              {
-                id: Date.now(),
-                role: 'agent',
-                content: data.reply,
-                isHuman: true,
-              },
-            ]
+            return updated
           })
-          if (data.human_active === false) {
+        }
+
+        // 4. 检查人工接待是否已结束
+        const replyRes = await fetch(`${API_BASE}/chat/reply/${sessionId}`)
+        if (replyRes.ok) {
+          const replyData = await replyRes.json()
+          if (replyData.human_active === false) {
             setHumanMode(false)
+            // 清理残留 loading 气泡
+            if (loadingMsgIdRef.current) {
+              setMessages((prev) =>
+                prev.filter((m) => !(m.id === loadingMsgIdRef.current && m.loading)),
+              )
+              loadingMsgIdRef.current = null
+            }
           }
         }
       } catch {
         // 静默忽略
       }
-    }, POLL_INTERVAL)
+    }
 
+    poll()
+    const timer = setInterval(poll, POLL_INTERVAL)
     return () => clearInterval(timer)
-  }, [humanMode])
+  }, [humanMode, sessionId])
 
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -103,41 +165,6 @@ function ChatPage() {
           : msg,
       ),
     )
-  }
-
-  const startPolling = (thinkingId, lastSeen = '') => {
-    clearPolling()
-    pollStartRef.current = Date.now()
-
-    const poll = async () => {
-      if (Date.now() - pollStartRef.current > POLL_TIMEOUT) {
-        clearPolling()
-        updateAgentMsg(thinkingId, '等待超时，请稍后重试', false, humanMode)
-        return
-      }
-
-      try {
-        const res = await fetch(
-          `http://localhost:8002/api/v1/chat/reply/${sessionId}`,
-        )
-        if (!res.ok) return
-
-        const data = await res.json()
-        if (data.status === 'completed' && data.reply !== lastSeen) {
-          clearPolling()
-          lastHumanReplyRef.current = data.reply
-          updateAgentMsg(thinkingId, data.reply, false, true)
-          if (data.human_active === false) {
-            setHumanMode(false)
-          }
-        }
-      } catch {
-        // 静默忽略
-      }
-    }
-
-    poll()
-    pollTimerRef.current = setInterval(poll, POLL_INTERVAL)
   }
 
   const handleSend = async () => {
@@ -163,32 +190,37 @@ function ChatPage() {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), SEND_TIMEOUT)
 
-      const res = await fetch('http://localhost:8002/api/v1/chat/send', {
+      const res = await fetch(`${API_BASE}/chat/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
-          user_id: 'user_001',
           message: text,
         }),
         signal: controller.signal,
       })
       clearTimeout(timeoutId)
 
-      if (!res.ok) throw new Error('request failed')
+      if (!res.ok) {
+        updateAgentMsg(thinkingId, getHttpErrorMessage(res.status), false)
+        return
+      }
 
       const data = await res.json()
 
       if (data.status === 'human_chat' || humanMode) {
-        setHumanMode(true)
+        // 记录 loading 气泡 ID，等轮询拿到回复后替换
+        loadingMsgIdRef.current = thinkingId
         updateAgentMsg(thinkingId, '消息已发送，等待客服回复...', true, true)
-        startPolling(thinkingId, lastHumanReplyRef.current)
+        if (!humanMode) {
+          // 首次进入人工模式：重置基线后再 setHumanMode
+          enterHumanMode()
+        }
         return
       }
 
       setHumanMode(false)
-      lastHumanReplyRef.current = ''
-      updateAgentMsg(thinkingId, data.response || '（无回复内容）', false, false)
+      updateAgentMsg(thinkingId, resolveDisplayReply(data), false, false)
 
       if (data.ticket_offer) {
         setTicketOffer(data.ticket_offer)
@@ -202,7 +234,7 @@ function ChatPage() {
         thinkingId,
         isTimeout
           ? '响应超时，请确认后端已重启后重试'
-          : '请求失败，请检查后端是否启动',
+          : '网络异常，请检查后端是否启动',
         false,
       )
     } finally {
@@ -213,11 +245,26 @@ function ChatPage() {
   const handleTicketConfirm = async (confirmed) => {
     setTicketConfirming(true)
     try {
-      const res = await fetch('http://localhost:8002/api/v1/chat/ticket-confirm', {
+      const res = await fetch(`${API_BASE}/chat/ticket-confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, confirmed }),
       })
+      if (!res.ok) {
+        let detail = '操作失败，请稍后重试'
+        try {
+          const err = await res.json()
+          detail = err.detail || err.message || detail
+        } catch {
+          // 忽略解析错误
+        }
+        setTicketOffer(null)
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now(), role: 'agent', content: detail },
+        ])
+        return
+      }
       const data = await res.json()
       setTicketOffer(null)
 
@@ -245,22 +292,37 @@ function ChatPage() {
   const handleHumanConfirm = async (confirmed) => {
     setHumanConfirming(true)
     try {
-      const res = await fetch('http://localhost:8002/api/v1/chat/human-confirm', {
+      const res = await fetch(`${API_BASE}/chat/human-confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, confirmed }),
       })
+      if (!res.ok) {
+        let detail = '操作失败，请稍后重试'
+        try {
+          const err = await res.json()
+          detail = err.detail || err.message || detail
+        } catch {
+          // 忽略解析错误
+        }
+        setHumanOffer(null)
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now(), role: 'agent', content: detail },
+        ])
+        return
+      }
       const data = await res.json()
       setHumanOffer(null)
 
       if (confirmed && data.status === 'entered') {
-        setHumanMode(true)
         const enterMsg = '已为您转接人工客服，请稍候，客服将尽快回复您。'
         setMessages((prev) => [
           ...prev,
           { id: Date.now(), role: 'agent', content: enterMsg, isHuman: true },
         ])
-        lastHumanReplyRef.current = enterMsg
+        // 设置基线后进入人工模式，防止把已有历史当新消息重复展示
+        await enterHumanMode()
         return
       }
 
@@ -284,15 +346,27 @@ function ChatPage() {
     }
   }
 
+  const getAvatar = (msg) => {
+    if (msg.role === 'user') return '👤'
+    if (msg.isHuman) return '🧑‍💼'
+    return '🤖'
+  }
+
+  const getSenderLabel = (msg) => {
+    if (msg.role === 'user') return '我'
+    if (msg.isHuman) return '人工客服'
+    return 'AI 助手'
+  }
+
   return (
     <div className="chat-page">
       <Card
         className="chat-card"
         title={
           <span>
-            游戏客服 Agent
+            游戏客服助手
             {humanMode && (
-              <Tag color="orange" style={{ marginLeft: 8 }}>
+              <Tag color="orange" className="chat-status-tag">
                 人工客服接待中
               </Tag>
             )}
@@ -306,77 +380,83 @@ function ChatPage() {
               className={`message-item ${msg.role === 'user' ? 'user' : 'agent'}`}
             >
               <div
-                className={`message-bubble ${msg.isHuman ? 'human-agent' : ''}`}
+                className={`message-avatar ${msg.isHuman ? 'human' : ''}`}
               >
-                {msg.loading ? (
-                  <span className="thinking">
-                    <Spin size="small" />
-                    {msg.content}
-                  </span>
-                ) : (
-                  msg.content
-                )}
+                {getAvatar(msg)}
+              </div>
+              <div className="message-bubble-wrap">
+                <span className="message-sender">{getSenderLabel(msg)}</span>
+                <div
+                  className={`message-bubble ${msg.isHuman ? 'human-agent' : ''}`}
+                >
+                  {msg.loading ? (
+                    <span className="thinking">
+                      <Spin size="small" />
+                      {msg.content}
+                    </span>
+                  ) : (
+                    msg.content
+                  )}
+                </div>
               </div>
             </div>
           ))}
           {humanOffer && (
             <div className="message-item agent">
-              <div className="message-bubble ticket-offer">
-                <div style={{ marginBottom: 8 }}>
-                  <strong>{humanOffer.display_text || '是否为你转人工？'}</strong>
-                </div>
-                {humanOffer.summary && (
-                  <div style={{ fontSize: 13, color: '#555', marginBottom: 10 }}>
-                    问题摘要：{humanOffer.summary}
+              <div className="message-avatar">🤖</div>
+              <div className="message-bubble-wrap">
+                <span className="message-sender">AI 助手</span>
+                <div className="message-bubble ticket-offer">
+                  <div style={{ marginBottom: 8 }}>
+                    <strong>{humanOffer.display_text || '是否为你转人工？'}</strong>
                   </div>
-                )}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <Button
-                    type="primary"
-                    size="small"
-                    loading={humanConfirming}
-                    onClick={() => handleHumanConfirm(true)}
-                  >
-                    是
-                  </Button>
-                  <Button
-                    size="small"
-                    disabled={humanConfirming}
-                    onClick={() => handleHumanConfirm(false)}
-                  >
-                    否
-                  </Button>
+                  <div className="offer-actions">
+                    <Button
+                      type="primary"
+                      size="small"
+                      loading={humanConfirming}
+                      onClick={() => handleHumanConfirm(true)}
+                    >
+                      是
+                    </Button>
+                    <Button
+                      size="small"
+                      disabled={humanConfirming}
+                      onClick={() => handleHumanConfirm(false)}
+                    >
+                      否
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
           )}
           {ticketOffer && (
             <div className="message-item agent">
-              <div className="message-bubble ticket-offer">
-                <div style={{ marginBottom: 8 }}>
-                  <strong>{ticketOffer.display_text || '是否为您生成工单？'}</strong>
-                </div>
-                {ticketOffer.summary && (
-                  <div style={{ fontSize: 13, color: '#555', marginBottom: 10 }}>
-                    问题摘要：{ticketOffer.summary}
+              <div className="message-avatar">🤖</div>
+              <div className="message-bubble-wrap">
+                <span className="message-sender">AI 助手</span>
+                <div className="message-bubble ticket-offer">
+                  <div style={{ marginBottom: 8 }}>
+                    <strong>{ticketOffer.display_text || '是否为您生成工单？'}</strong>
                   </div>
-                )}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <Button
-                    type="primary"
-                    size="small"
-                    loading={ticketConfirming}
-                    onClick={() => handleTicketConfirm(true)}
-                  >
-                    是
-                  </Button>
-                  <Button
-                    size="small"
-                    disabled={ticketConfirming}
-                    onClick={() => handleTicketConfirm(false)}
-                  >
-                    否
-                  </Button>
+                  <div className="offer-actions">
+                    <Button
+                      type="primary"
+                      size="small"
+                      loading={ticketConfirming}
+                      onClick={() => handleTicketConfirm(true)}
+                    >
+                      是
+                    </Button>
+                    <Button
+                      size="small"
+                      disabled={ticketConfirming}
+                      onClick={() => handleTicketConfirm(false)}
+                    >
+                      否
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -388,7 +468,7 @@ function ChatPage() {
           <Input
             value={input}
             placeholder={
-              humanMode ? '继续向人工客服描述问题...' : '请输入问题...'
+              humanMode ? '继续向人工客服描述问题...' : '请输入问题，按 Enter 发送'
             }
             onChange={(e) => setInput(e.target.value)}
             onPressEnter={handleSend}
