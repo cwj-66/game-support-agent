@@ -19,6 +19,8 @@ CREATE DATABASE IF NOT EXISTS game_support
 
 USE game_support;
 
+SET NAMES utf8mb4;
+
 -- ------------------------------------------------------------
 -- 玩家表（对应游戏服 player / character）
 -- ------------------------------------------------------------
@@ -110,4 +112,7 @@ VALUES
     ('TK-20260528-6001', '10006', '活动奖励未发放', '完成活动未收到奖励', 'bug', 'P2', 'pending', NULL, '10006_sess_001', '2026-05-28 23:00:00', NULL),
     ('TK-20260529-9001', '10009', '大额充值风控', '9999元充值被拦截', 'payment', 'P0', 'processing', NULL, '10009_sess_001', '2026-05-29 08:30:00', NULL),
     ('TK-20260515-1501', '10015', '如何获得角色', '新手不知道如何抽卡', 'other', 'P2', 'resolved', '可在祈愿界面使用原石抽取', '10015_sess_001', '2026-05-15 10:00:00', '2026-05-15 10:05:00')
-ON DUPLICATE KEY UPDATE title = VALUES(title);
+ON DUPLICATE KEY UPDATE
+    title = VALUES(title),
+    description = VALUES(description),
+    agent_reply = VALUES(agent_reply);
