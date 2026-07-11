@@ -43,7 +43,7 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
     ticket_id = state.get("ticket_id")
     if ticket_id:
         try:
-            from app.core.database import update_ticket
+            from app.repositories.database import update_ticket
             update_ticket(ticket_id, agent_reply=final_response)
         except Exception:
             pass

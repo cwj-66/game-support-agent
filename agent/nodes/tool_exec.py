@@ -64,7 +64,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             "node_trace": ["tool_exec"],
         }
 
-    # 检查特殊工具：propose_ticket（生成工单 offer）或 request_human_escalation（转人工）
+    # 检查特殊工具：propose_ticket / propose_human_escalation（生成确认按钮，不真正执行）
     for tc in last_ai.tool_calls:
         if tc["name"] == "propose_ticket":
             issue_type = tc["args"].get("issue_type", "other")
@@ -84,24 +84,32 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                 "node_trace": ["tool_exec"],
             }
 
-        if tc["name"] == "request_human_escalation":
-            reason = tc["args"].get("reason", "用户要求转人工")
+        if tc["name"] == "propose_human_escalation":
+            summary = tc["args"].get("summary", "")
+            metadata["human_offer_pending"] = True
             return {
-                "interrupt_info": {
-                    "should_interrupt": True,
-                    "reason": reason,
-                    "level": "high",
-                    "sensitive_words": [],
-                    "pending_content": None,
-                    "source": "llm_escalate",
+                "human_offer": {
+                    "summary": summary,
                 },
+                "messages": [ToolMessage(
+                    content="已生成转人工确认选项，用户将看到「是/否」按钮。"
+                            "请生成一条自然的过渡回复：先简要总结用户问题，"
+                            "再告知用户可通过按钮确认是否转人工。",
+                    name="propose_human_escalation",
+                    tool_call_id=tc["id"],
+                )],
+                "metadata": metadata,
                 "node_trace": ["tool_exec"],
             }
 
     for tc in last_ai.tool_calls:
         tool_name: str = tc["name"]
-        tool_args: dict = tc["args"]
+        tool_args: dict = dict(tc["args"])
         tool_call_id: str = tc["id"]
+
+        # 账号/工单查询强制使用 state 中的 user_id（来自 JWT，不可被 LLM 伪造）
+        if tool_name in ("check_ticket", "lookup_account"):
+            tool_args["user_id"] = state.get("user_id", "")
 
         record = {
             "tool": tool_name,

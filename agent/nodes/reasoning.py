@@ -40,7 +40,9 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     LLM 收到用户问题后可以：
     - 调用 query_knowledge 查询游戏知识库
     - 调用 lookup_account 查询玩家账号状态（按需传 fields 参数）
-    - 调用 propose_ticket 向用户提出工单创建建议（不直接创建）
+    - 调用 check_ticket 查询玩家历史工单情况
+    - 调用 propose_ticket 向用户提出工单创建建议
+    - 调用 propose_human_escalation 向用户提出转人工确认
     - 直接输出回答（不调用任何工具）
 
     工具结果会追加到 messages，LLM 可多轮循环调用直到给出最终回复。
@@ -54,7 +56,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
         system_prompt += f"\n\n当前玩家 UID：{user_id}"
         # 注入跨会话长期记忆摘要（非当前对话原文）
         try:
-            from app.core.long_term_memory import format_memory_prompt_block
+            from app.services.long_term_memory import format_memory_prompt_block
             memory_block = await format_memory_prompt_block(user_id)
             if memory_block:
                 system_prompt += f"\n\n{memory_block}"
@@ -76,6 +78,19 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
             response: AIMessage = await llm.ainvoke(llm_messages)
         except Exception as exc:
             response = AIMessage(content="好的，已为您整理了问题详情，请稍后确认是否需要创建工单。")
+        return {
+            "messages": [response],
+            "metadata": metadata,
+            "node_trace": ["reasoning"],
+        }
+
+    # propose_human_escalation 已提出 → 去掉工具，生成过渡告知语（含问题总结）
+    if metadata.get("human_offer_pending"):
+        metadata.pop("human_offer_pending", None)
+        try:
+            response: AIMessage = await llm.ainvoke(llm_messages)
+        except Exception:
+            response = AIMessage(content="我们理解您的心情。请通过下方按钮确认是否需要转接人工客服。")
         return {
             "messages": [response],
             "metadata": metadata,

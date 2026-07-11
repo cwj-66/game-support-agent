@@ -1,8 +1,8 @@
 """
 LangGraph 状态持久化配置 — AsyncRedisSaver
 
-用 AsyncRedisSaver 替代 RedisSaver，以支持 FastAPI async 接口的异步调用。
-0.4.x 版本的 RedisSaver.aget_tuple 未实现，必须使用 AsyncRedisSaver。
+AsyncRedisSaver 支持 FastAPI async 接口的异步调用。
+
 """
 
 import logging

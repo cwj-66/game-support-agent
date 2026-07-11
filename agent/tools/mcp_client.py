@@ -4,7 +4,7 @@ MCP Client 封装
 连接本项目的 MCP Server（mcp_server.py，streamable_http transport），
 发现并缓存工具，转成 LangChain BaseTool 供 Agent 使用。
 
-连接失败自动降级：返回空列表，get_all_tools() 改用本地工具兜底，不影响核心功能。
+连接失败时由应用启动阶段直接报错，不提供本地工具兜底。
 """
 
 import os
@@ -22,7 +22,7 @@ async def init_mcp_client(url: str = "http://localhost:8001/mcp") -> list:
     """初始化 MCP 客户端，连接 MCP Server 并发现工具。
 
     Args:
-        url: MCP Server 地址（streamable_http，连接失败自动降级为空列表）
+        url: MCP Server 地址（streamable_http）
 
     Returns:
         MCP 工具列表（LangChain BaseTool 格式）
