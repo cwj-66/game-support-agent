@@ -52,3 +52,16 @@ async def append_agent_reply(session_id: str, content: str, **extra_state: Any) 
         [AIMessage(content=content)],
         extra_state or None,
     )
+
+
+async def checkpoint_exists(session_id: str) -> bool:
+    """会话是否已有 LangGraph checkpoint（用于跳过无意义的归档）"""
+    from agent.checkpointer import get_checkpointer
+
+    checkpointer = await get_checkpointer()
+    config = graph_config(session_id)
+    if await checkpointer.aget_tuple(config) is not None:
+        return True
+    return await checkpointer.aget_tuple(
+        {"configurable": {"thread_id": session_id}}
+    ) is not None

@@ -101,20 +101,26 @@ async def expire_session_if_needed(session_id: str) -> bool:
         await touch_session(session_id)
         return True
 
-    # 会话过期 → 先归档长期记忆，再清除 checkpoint
+    # 仅当存在历史 checkpoint 时才归档+清除（全新 session_id 首次来访直接跳过）
     try:
-        from app.core.session_summary import archive_session_before_clear
-        await archive_session_before_clear(session_id)
-    except Exception as exc:
-        logger.warning("Session archive failed for %s: %s", session_id, exc)
+        from app.core.checkpoint_helper import checkpoint_exists
 
-    try:
-        from agent.checkpointer import get_checkpointer
-        cp = await get_checkpointer()
-        await cp.adelete_thread(session_id)
-        logger.info("Session expired, checkpoint cleared: %s", session_id)
+        if await checkpoint_exists(session_id):
+            try:
+                from app.services.session_summary import archive_session_before_clear
+                await archive_session_before_clear(session_id)
+            except Exception as exc:
+                logger.warning("Session archive failed for %s: %s", session_id, exc)
+
+            try:
+                from agent.checkpointer import get_checkpointer
+                cp = await get_checkpointer()
+                await cp.adelete_thread(session_id)
+                logger.info("Session expired, checkpoint cleared: %s", session_id)
+            except Exception as exc:
+                logger.warning("Failed to clear checkpoint for expired session %s: %s", session_id, exc)
     except Exception as exc:
-        logger.warning("Failed to clear checkpoint for expired session %s: %s", session_id, exc)
+        logger.warning("Checkpoint check failed for %s: %s", session_id, exc)
 
     await touch_session(session_id)
     return False

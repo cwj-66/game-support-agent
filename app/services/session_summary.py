@@ -43,6 +43,8 @@ def _guess_outcome(channel_values: dict[str, Any]) -> str:
         return f"ticket_created:{ticket_id}"
     if channel_values.get("human_mode"):
         return "human_escalated"
+    if channel_values.get("human_offer"):
+        return "human_offer_pending"
     if channel_values.get("ticket_offer"):
         return "ticket_offer_pending"
     return "resolved_or_unknown"
@@ -53,23 +55,21 @@ async def archive_session_before_clear(session_id: str) -> None:
     会话过期清 checkpoint 前：读取 state → LLM 摘要 → 写入长期记忆。
     无 checkpoint 或 messages 为空时静默跳过。
     """
-    from agent.graph import get_graph
+    from agent.checkpointer import get_checkpointer
     from app.core.checkpoint_helper import graph_config
-    from app.core.long_term_memory import save_session_summary
+    from app.services.long_term_memory import save_session_summary
 
-    g = await get_graph()
+    checkpointer = await get_checkpointer()
     config = graph_config(session_id)
-
-    try:
-        state = await g.aget_state(config)
-    except Exception as exc:
-        logger.warning("archive: failed to get state for %s: %s", session_id, exc)
+    checkpoint_tuple = await checkpointer.aget_tuple(config)
+    if checkpoint_tuple is None:
+        checkpoint_tuple = await checkpointer.aget_tuple(
+            {"configurable": {"thread_id": session_id}}
+        )
+    if checkpoint_tuple is None:
         return
 
-    if state is None or not state.values:
-        return
-
-    channel_values = state.values
+    channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
     messages = channel_values.get("messages") or []
     user_id = channel_values.get("user_id", "")
     if not messages or not user_id:

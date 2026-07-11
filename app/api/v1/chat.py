@@ -16,44 +16,28 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from app.core.config import get_settings, Settings
 from app.core.exceptions import AgentExecutionException, SessionNotFoundException
+from app.api.deps import CurrentPlayer, get_current_player, require_session_owner
 from app.models.chat import (
     ChatRequest,
     ChatResponse,
     ChatHistoryResponse,
     ChatHistoryItem,
     TicketOffer,
+    HumanOffer,
 )
-from agent.graph import run_agent, stream_agent, get_graph
+from agent.graph import run_agent, stream_agent
 from agent.checkpointer import get_checkpointer
-from app.core.pending_store import add_pending, get_pending, remove_pending
-from app.core.human_invoke import invoke_human_resume
-
-# 兼容不同版本 LangGraph 的 GraphInterrupt
-try:
-    from langgraph.errors import GraphInterrupt
-except ImportError:
-    GraphInterrupt = None
+from app.services.pending_store import get_pending, remove_pending
+from app.services.human_chat import (
+    append_user_message,
+    append_agent_message,
+    enter_human_mode,
+    close_human_session,
+    is_human_mode,
+)
 
 
 router = APIRouter(prefix="/chat", tags=["对话"])
-
-
-def _get_interrupt_response(interrupt_payload: dict) -> str:
-    """根据中断来源生成合适的用户提示"""
-    source = interrupt_payload.get("source", "")
-    reason = interrupt_payload.get("interrupt_reason", "")
-
-    # detector 触发 → 统一提示
-    if source == "detector":
-        return "您的问题正在由专员核实，请稍候。"
-
-    # LLM 主动升等
-    if source == "llm_escalate":
-        if "知识库" in reason or "无结果" in reason or "找不到" in reason:
-            return "抱歉，我暂时没有找到相关信息，已为您转接人工客服协助处理，请稍候。"
-        return "正在为您转接人工客服处理，请稍候。"
-
-    return "正在为您转接人工客服，请稍候。"
 
 
 def _node_to_progress(node_name: str) -> str:
@@ -61,53 +45,38 @@ def _node_to_progress(node_name: str) -> str:
     mapping = {
         "reasoning": "正在分析您的问题...",
         "tool_exec": "正在查询知识库...",
-        "detector": "正在进行安全检测...",
-        "human": "已转交人工审核，请稍候...",
         "generate": "正在生成回复...",
         "finish": "处理完成",
     }
     return mapping.get(node_name, "")
 
 
-# ──────────────────────────────────────────────
-# 优化 1 & 4：发送消息 + 人工审核中断检测 + 耗时统计 + 细化错误处理
-# ──────────────────────────────────────────────
 @router.post("/send", response_model=ChatResponse)
 async def send_message(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
+    player: CurrentPlayer = Depends(get_current_player),
     settings: Settings = Depends(get_settings),
 ) -> ChatResponse:
     """
     发送对话消息
 
-    流程：
-    1. 接收用户消息
-    2. 执行 LangGraph Agent
-    3. 检查是否触发 Human-in-the-loop 中断
-    4. 返回回复或审核等待标记，附带真实耗时
+    人工接待中：消息直接写入 checkpoint，不跑 Agent。
+    正常模式：跑完整 LangGraph，可能返回 ticket_offer / human_offer 供前端确认。
     """
+    require_session_owner(request.session_id, player)
+    user_id = player.user_id
     start_time = time.perf_counter()
 
-    # --- 人工接待中：pending 存在即走人工通道，不再跑 Agent ---
-    # 决策注释：interrupt 挂起时 graph_state.next 可能为空，不能依赖 next==("human",)
-    if await get_pending(request.session_id):
+    # 人工接待中：pending 或 human_mode 存在即走人工通道
+    if await get_pending(request.session_id) or await is_human_mode(request.session_id):
         try:
-            await invoke_human_resume(
-                request.session_id,
-                {
-                    "source": "user",
-                    "message": request.message,
-                    "action": "continue",
-                },
-            )
+            await append_user_message(request.session_id, request.message)
             execution_time_ms = int((time.perf_counter() - start_time) * 1000)
             return ChatResponse(
                 session_id=request.session_id,
-                status="under_review",
+                status="human_chat",
                 response="消息已发送，等待客服回复...",
-                requires_review=True,
-                review_id=request.session_id,
                 metadata={"execution_time_ms": execution_time_ms, "human_mode": True},
             )
         except Exception:
@@ -117,87 +86,50 @@ async def send_message(
     try:
         result = await run_agent(
             session_id=request.session_id,
-            user_id=request.user_id,
+            user_id=user_id,
             user_query=request.message,
         )
 
         execution_time_ms = int((time.perf_counter() - start_time) * 1000)
-
-        # 检查是否触发了 interrupt（兼容不同 LangGraph 版本的中断返回方式）
-        interrupt_payload = result.get("__interrupt__")
-        if result.get("has_interrupt") or interrupt_payload:
-            if not isinstance(interrupt_payload, dict):
-                interrupt_payload = {}
-            await add_pending(request.session_id, interrupt_payload)
-            source = interrupt_payload.get("source", "")
-            return ChatResponse(
-                session_id=request.session_id,
-                status="under_review",
-                response=_get_interrupt_response(interrupt_payload),
-                requires_review=True,
-                review_id=request.session_id,
-                metadata={
-                    "execution_time_ms": execution_time_ms,
-                    "interrupt_source": source,
-                },
-            )
-
         final_response = result.get("final_response") or ""
 
-        # 检查是否有工单确认请求
-        raw_offer = result.get("ticket_offer")
+        raw_ticket = result.get("ticket_offer")
         ticket_offer_obj = None
-        if raw_offer and isinstance(raw_offer, dict):
+        if raw_ticket and isinstance(raw_ticket, dict):
             ticket_offer_obj = TicketOffer(
-                summary=raw_offer.get("summary", ""),
-                issue_type=raw_offer.get("issue_type", "other"),
+                summary=raw_ticket.get("summary", ""),
+                issue_type=raw_ticket.get("issue_type", "other"),
+            )
+
+        raw_human = result.get("human_offer")
+        human_offer_obj = None
+        if raw_human and isinstance(raw_human, dict):
+            human_offer_obj = HumanOffer(
+                summary=raw_human.get("summary", ""),
             )
 
         return ChatResponse(
             session_id=request.session_id,
             response=final_response,
-            requires_review=False,
-            review_id=None,
             sources=result.get("metadata", {}).get("sources"),
             ticket_offer=ticket_offer_obj,
-            metadata={
-                "execution_time_ms": execution_time_ms,
-            },
+            human_offer=human_offer_obj,
+            metadata={"execution_time_ms": execution_time_ms},
         )
 
     except Exception as e:
-        exc_name = type(e).__name__
-        # GraphInterrupt：图被 interrupt() 真实挂起
-        # 兼容不同 LangGraph 版本的异常类型名
-        if "GraphInterrupt" in exc_name or "Interrupt" in exc_name:
-            execution_time_ms = int((time.perf_counter() - start_time) * 1000)
-            interrupt_payload = e.args[0] if e.args else {}
-            await add_pending(request.session_id, interrupt_payload)
-            return ChatResponse(
-                session_id=request.session_id,
-                status="under_review",
-                response=_get_interrupt_response(interrupt_payload),
-                requires_review=True,
-                review_id=request.session_id,
-                metadata={"execution_time_ms": execution_time_ms},
-            )
         traceback.print_exc()
         raise AgentExecutionException(str(e))
 
 
-# ──────────────────────────────────────────────
-# 优化 2：从 Checkpointer 读取真实历史记录
-# ──────────────────────────────────────────────
 @router.get("/history/{session_id}", response_model=ChatHistoryResponse)
 async def get_chat_history(
     session_id: str,
+    player: CurrentPlayer = Depends(get_current_player),
     settings: Settings = Depends(get_settings),
 ) -> ChatHistoryResponse:
-    """
-    获取对话历史
-
-    从 LangGraph checkpointer 中读取指定会话的消息列表
-    """
+    """从 LangGraph checkpointer 读取对话历史"""
+    require_session_owner(session_id, player)
     checkpointer = await get_checkpointer()
     config = {
         "configurable": {
@@ -206,10 +138,8 @@ async def get_chat_history(
         }
     }
 
-    # 兼容 LangGraph 不同版本的 checkpoint 查询
     checkpoint_tuple = await checkpointer.aget_tuple(config)
     if checkpoint_tuple is None:
-        # 尝试不带 checkpoint_ns 查询
         config_no_ns = {"configurable": {"thread_id": session_id}}
         checkpoint_tuple = await checkpointer.aget_tuple(config_no_ns)
 
@@ -218,8 +148,6 @@ async def get_chat_history(
 
     channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
     raw_messages = channel_values.get("messages", [])
-
-    # 使用 checkpoint 时间戳作为消息时间的参考值
     checkpoint_ts = checkpoint_tuple.checkpoint.get("ts") or datetime.now().isoformat()
 
     items: list[ChatHistoryItem] = []
@@ -229,7 +157,6 @@ async def get_chat_history(
         elif isinstance(msg, AIMessage):
             role = "assistant"
         else:
-            # ToolMessage / SystemMessage 不在对话历史里展示
             continue
 
         items.append(
@@ -237,8 +164,6 @@ async def get_chat_history(
                 role=role,
                 content=msg.content if isinstance(msg.content, str) else str(msg.content),
                 timestamp=checkpoint_ts,
-                requires_review=False,
-                reviewed=False,
             )
         )
 
@@ -250,17 +175,16 @@ async def get_chat_history(
 
 
 @router.get("/reply/{session_id}")
-async def get_human_reply(session_id: str):
+async def get_human_reply(
+    session_id: str,
+    player: CurrentPlayer = Depends(get_current_player),
+):
     """
-    轮询人工回复状态（供前端轮询）
+    轮询人工回复（供前端轮询）
 
-    当 human_node interrupt 被人工审核恢复后，finish_node 会写入带 human_source=True
-    标记的 AIMessage。前端轮询此端点即可感知人工回复已就绪。
-
-    返回：
-    - {status: "completed", reply: "..."} — 人工已回复
-    - {status: "pending"} — 尚未回复
+    返回最后一条带 human_source 标记的客服消息。
     """
+    require_session_owner(session_id, player)
     checkpointer = await get_checkpointer()
     config = {
         "configurable": {
@@ -269,7 +193,6 @@ async def get_human_reply(session_id: str):
         }
     }
 
-    # 兼容 LangGraph 不同版本的 checkpoint 查询
     checkpoint_tuple = await checkpointer.aget_tuple(config)
     if checkpoint_tuple is None:
         config_no_ns = {"configurable": {"thread_id": session_id}}
@@ -281,16 +204,14 @@ async def get_human_reply(session_id: str):
     channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
     messages = channel_values.get("messages", [])
 
-    # 找最后一条带 human_source 标记的 AIMessage
     for msg in reversed(messages):
         if isinstance(msg, AIMessage):
             kwargs = msg.additional_kwargs or {}
             if kwargs.get("human_source"):
                 reply = msg.content if isinstance(msg.content, str) else str(msg.content)
-                # human_active：会话是否仍在人工接待中（pending 未移除）
                 human_active = await get_pending(session_id) is not None
 
-                # --- 超时检测逻辑（1分钟提醒，5分钟结束） ---
+                # 超时检测：1分钟提醒，5分钟自动结束
                 if human_active:
                     ts_str = kwargs.get("timestamp")
                     if ts_str:
@@ -299,25 +220,20 @@ async def get_human_reply(session_id: str):
                             elapsed = (datetime.now(timezone.utc) - last_time).total_seconds()
                             is_warning = "如果5分钟未回复" in reply
 
-                            if is_warning and elapsed > 240:  # 提醒后又过了4分钟（总计5分钟）
-                                resume_payload = {
-                                    "source": "agent",
-                                    "message": "【系统提示】由于您长时间未回复，本次人工服务已自动结束。如需帮助请重新提问。",
-                                    "action": "close",
-                                }
-                                await invoke_human_resume(session_id, resume_payload)
-                                await remove_pending(session_id)
+                            if is_warning and elapsed > 240:
+                                await append_agent_message(
+                                    session_id,
+                                    "【系统提示】由于您长时间未回复，本次人工服务已自动结束。如需帮助请重新提问。",
+                                )
+                                await close_human_session(session_id)
                                 human_active = False
-                                reply = resume_payload["message"]
+                                reply = "【系统提示】由于您长时间未回复，本次人工服务已自动结束。如需帮助请重新提问。"
                             elif not is_warning and elapsed > 60 and "由于您长时间未回复" not in reply:
-                                # 1分钟未回复，发送提醒
-                                resume_payload = {
-                                    "source": "agent",
-                                    "message": "【系统提示】您好，请问还在吗？如果5分钟未回复，我们将结束本次会话。",
-                                    "action": "continue"
-                                }
-                                await invoke_human_resume(session_id, resume_payload)
-                                reply = resume_payload["message"]
+                                await append_agent_message(
+                                    session_id,
+                                    "【系统提示】您好，请问还在吗？如果5分钟未回复，我们将结束本次会话。",
+                                )
+                                reply = "【系统提示】您好，请问还在吗？如果5分钟未回复，我们将结束本次会话。"
                         except Exception:
                             pass
 
@@ -328,45 +244,25 @@ async def get_human_reply(session_id: str):
                 }
             break
 
-    # 兜底：直接检查 human_reply 字段（兼容旧数据）
-    human_reply = channel_values.get("human_reply")
-    final_response = channel_values.get("final_response") or ""
-    if human_reply and final_response:
-        human_active = await get_pending(session_id) is not None
-        return {
-            "status": "completed",
-            "reply": final_response,
-            "human_active": human_active,
-        }
-
     return {"status": "pending", "human_active": await get_pending(session_id) is not None}
 
 
-# ──────────────────────────────────────────────
-# 优化 3：真实流式输出（SSE）
-# ──────────────────────────────────────────────
 @router.post("/stream")
 async def stream_chat(
     request: ChatRequest,
+    player: CurrentPlayer = Depends(get_current_player),
     settings: Settings = Depends(get_settings),
 ):
-    """
-    流式对话（SSE）
-
-    逐节点推送 Agent 执行进度，最终推送完整回复。
-
-    事件格式（JSON）：
-    - {"type": "progress", "node": "...", "message": "..."}
-    - {"type": "done", "response": "..."}
-    - {"type": "error", "message": "..."}
-    """
+    """流式对话（SSE）"""
+    require_session_owner(request.session_id, player)
+    user_id = player.user_id
 
     async def event_generator() -> AsyncGenerator[str, None]:
         final_response = ""
         try:
             async for chunk in stream_agent(
                 session_id=request.session_id,
-                user_id=request.user_id,
+                user_id=user_id,
                 user_query=request.message,
             ):
                 if not chunk:
@@ -375,11 +271,9 @@ async def stream_chat(
                 node_name = next(iter(chunk))
                 node_updates = chunk[node_name]
 
-                # 更新当前最新的 final_response
                 if isinstance(node_updates, dict) and node_updates.get("final_response"):
                     final_response = node_updates["final_response"]
 
-                # 推送节点进度
                 progress = _node_to_progress(node_name)
                 if progress:
                     data = json.dumps(
@@ -388,7 +282,6 @@ async def stream_chat(
                     )
                     yield f"data: {data}\n\n"
 
-            # 所有节点执行完毕，推送最终回复
             data = json.dumps(
                 {"type": "done", "response": final_response},
                 ensure_ascii=False,
@@ -411,11 +304,11 @@ async def stream_chat(
 
 class TicketConfirmRequest(BaseModel):
     session_id: str
-    confirmed: bool  # True=点了「是」，False=点了「否」
+    confirmed: bool
 
 
 class TicketConfirmResponse(BaseModel):
-    status: str  # created / cancelled
+    status: str
     ticket_id: str | None = None
     estimated_response: str | None = None
     issue_type: str | None = None
@@ -423,14 +316,12 @@ class TicketConfirmResponse(BaseModel):
 
 
 @router.post("/ticket-confirm", response_model=TicketConfirmResponse)
-async def confirm_ticket_offer(request: TicketConfirmRequest) -> TicketConfirmResponse:
-    """
-    处理工单创建确认
-
-    用户点击前端「是」/「否」按钮后调用此接口：
-    - confirmed=True  → 创建工单，并将结果写入 checkpoint messages
-    - confirmed=False → 写入取消记录到 checkpoint
-    """
+async def confirm_ticket_offer(
+    request: TicketConfirmRequest,
+    player: CurrentPlayer = Depends(get_current_player),
+) -> TicketConfirmResponse:
+    """处理工单创建确认（玩家点「是/否」）"""
+    require_session_owner(request.session_id, player)
     from app.core.checkpoint_helper import append_agent_reply, graph_config
 
     checkpointer = await get_checkpointer()
@@ -458,10 +349,10 @@ async def confirm_ticket_offer(request: TicketConfirmRequest) -> TicketConfirmRe
         )
         return TicketConfirmResponse(status="cancelled")
 
-    user_id = channel_values.get("user_id", "")
+    user_id = player.user_id
     tool_calls = channel_values.get("tool_calls", [])
 
-    from app.core.ticket_service import create_ticket_core
+    from app.services.ticket_service import create_ticket_core
     result = create_ticket_core(
         user_id=user_id,
         issue_type=ticket_offer.get("issue_type", "other"),
@@ -473,7 +364,7 @@ async def confirm_ticket_offer(request: TicketConfirmRequest) -> TicketConfirmRe
 
     if ticket_id and tool_calls:
         try:
-            from app.core.database import update_ticket
+            from app.repositories.database import update_ticket
             from agent.tools import simplify_tool_context
             update_ticket(
                 ticket_id,
@@ -482,7 +373,6 @@ async def confirm_ticket_offer(request: TicketConfirmRequest) -> TicketConfirmRe
         except Exception:
             pass
 
-    # 写入 checkpoint，让 Agent 会话内记忆包含建单结果
     reply_text = (
         f"✅ 工单已创建！工单号：{ticket_id}，预计处理时间：{estimated}"
         if ticket_id
@@ -504,7 +394,58 @@ async def confirm_ticket_offer(request: TicketConfirmRequest) -> TicketConfirmRe
     )
 
 
-# TODO: 未来扩展
-# - 添加会话创建API（POST /sessions）
-# - 添加会话结束/归档API
-# - 添加消息反馈API（点赞/点踩）
+class HumanConfirmRequest(BaseModel):
+    session_id: str
+    confirmed: bool
+
+
+class HumanConfirmResponse(BaseModel):
+    status: str  # entered / cancelled
+    summary: str | None = None
+
+
+@router.post("/human-confirm", response_model=HumanConfirmResponse)
+async def confirm_human_offer(
+    request: HumanConfirmRequest,
+    player: CurrentPlayer = Depends(get_current_player),
+) -> HumanConfirmResponse:
+    """
+    处理转人工确认（玩家点「是/否」）
+
+    confirmed=True  → 进入人工接待，登记 pending，客服可见线程对话
+    confirmed=False → 取消，无事发生
+    """
+    require_session_owner(request.session_id, player)
+    from app.core.checkpoint_helper import append_agent_reply, graph_config
+
+    checkpointer = await get_checkpointer()
+    config = graph_config(request.session_id)
+    checkpoint_tuple = await checkpointer.aget_tuple(config)
+
+    if checkpoint_tuple is None:
+        checkpoint_tuple = await checkpointer.aget_tuple(
+            {"configurable": {"thread_id": request.session_id}}
+        )
+
+    if checkpoint_tuple is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
+    human_offer = channel_values.get("human_offer")
+    if not human_offer:
+        raise HTTPException(status_code=400, detail="无待确认的转人工请求")
+
+    if not request.confirmed:
+        await append_agent_reply(
+            request.session_id,
+            "好的，已取消转人工。如需帮助随时告知。",
+            human_offer=None,
+        )
+        return HumanConfirmResponse(status="cancelled")
+
+    await enter_human_mode(request.session_id)
+
+    return HumanConfirmResponse(
+        status="entered",
+        summary=human_offer.get("summary"),
+    )

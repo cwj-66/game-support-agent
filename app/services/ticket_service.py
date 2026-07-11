@@ -2,10 +2,10 @@
 工单业务逻辑服务层
 
 将 issue_type 映射、优先级映射、数据库调用等核心逻辑集中在此处，
-避免在 agent/tools/ticket.py（本地兜底）和 mcp_server.py（MCP 暴露）中重复编写。
+避免在 mcp_server.py 中重复编写。
 
 两处都调用这里的函数：
-    from app.core.ticket_service import create_ticket_core, check_ticket_core
+    from app.services.ticket_service import create_ticket_core, check_ticket_core
 """
 
 import time
@@ -46,7 +46,7 @@ def create_ticket_core(user_id: str, issue_type: str, description: str) -> dict:
 
     db_error = None
     try:
-        from app.core.database import create_ticket as db_create
+        from app.repositories.database import create_ticket as db_create
         db_ticket = db_create(
             player_uid=user_id,
             title=title,
@@ -75,7 +75,7 @@ def check_ticket_core(user_id: str, ticket_id: str = "") -> dict:
     失败时返回包含 error 的 dict，不抛异常。
     """
     try:
-        from app.core.database import get_ticket, list_tickets
+        from app.repositories.database import get_ticket, list_tickets
 
         if ticket_id:
             ticket = get_ticket(ticket_id)

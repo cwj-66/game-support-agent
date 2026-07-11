@@ -30,7 +30,6 @@ class Settings(BaseSettings):
         GENERATE_MODEL_NAME: generate 节点的模型
         
         HIL_ENABLED: 是否启用Human-in-loop
-        中断检测的敏感词在 safety.detector 中管理
     """
     
     # 基础配置
@@ -90,7 +89,6 @@ class Settings(BaseSettings):
         default=True,
         description="是否启用人工审核"
     )
-    # 已迁移至 detector.py 管理
     
     # 安全配置
     API_KEY: Optional[str] = Field(
@@ -101,6 +99,21 @@ class Settings(BaseSettings):
         default=None,
         description="审核员 API Key，用于人工审核接口鉴权（简化版，生产应替换为 JWT + RBAC）"
     )
+    GAME_JWT_SECRET: Optional[str] = Field(
+        default=None,
+        description="游戏服签发 JWT 的密钥，与游戏服共享",
+    )
+    GAME_JWT_ALGORITHM: str = Field(
+        default="HS256",
+        description="游戏 JWT 签名算法",
+    )
+
+    # MySQL（Mock 游戏用户 + 工单，见 scripts/mysql/init.sql）
+    MYSQL_HOST: str = Field(default="127.0.0.1", description="MySQL 主机")
+    MYSQL_PORT: int = Field(default=3307, description="MySQL 端口（本机连 Docker 时用 3307，容器内仍用 3306）")
+    MYSQL_USER: str = Field(default="game_support", description="MySQL 用户名")
+    MYSQL_PASSWORD: str = Field(default="game_support_pass", description="MySQL 密码")
+    MYSQL_DATABASE: str = Field(default="game_support", description="MySQL 数据库名")
     
     # LangSmith 可观测性配置
     LANGCHAIN_TRACING_V2: bool = Field(
@@ -144,6 +157,20 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
     LOG_DIR: str = Field(default="./logs", description="日志目录")
     
+    @property
+    def mysql_url(self) -> str:
+        """SQLAlchemy / PyMySQL 连接串"""
+        return (
+            f"mysql+pymysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}"
+            f"@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
+            f"?charset=utf8mb4"
+        )
+
+    @property
+    def game_auth_disabled(self) -> bool:
+        """本地开发：DEBUG 且未配置 JWT 密钥时跳过玩家鉴权"""
+        return self.DEBUG and not self.GAME_JWT_SECRET
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
