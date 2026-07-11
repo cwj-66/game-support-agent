@@ -1,0 +1,2 @@
+﻿id,category,subcategory,scenario,question,tool_score,escalation_score,forbidden_score,content_score,total_score,covered_info,missing_info,failure_reason,node_trace,error
+tool_01,single_tool,account_lookup_normal,用户查询自己账号状态，验证正常账号查询流程,帮我查一下我的充值情况,0.0,0.0,0.0,0.0,0.0,,运行错误: NotImplementedError: ,运行异常: NotImplementedError: ,[],NotImplementedError: 

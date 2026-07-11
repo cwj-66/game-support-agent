@@ -9,7 +9,7 @@
     "ground_truth": "您好，已为您转接人工客服处理充值未到账的问题，请耐心等待，客服同事会尽快为您处理。",
     "llm_judge_context": "查询用户（UID 10003）充值状态（充值异常、充值未到账）后转接人工客服",
     "expected_tool_sequence": [
-      {"name": "escalate_to_human", "args": {}}
+      {"name": "propose_human_escalation", "args": {}}
     ],
     "must_escalate": true,
     "keywords": ["人工", "充值", "未到账", "投诉", "10003"]

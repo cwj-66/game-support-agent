@@ -20,7 +20,7 @@
         "question": "我没开挂！你们乱封号！我要找你们经理投诉！马上给我转人工客服！",
         "ground_truth": "用户从上一轮的询问状态变为激烈投诉。应安抚用户情绪，解释封禁依据，并按照用户要求转接人工客服进一步处理。",
         "expected_tool_sequence": [
-          {"name": "escalate_to_human", "args": {}}
+          {"name": "propose_human_escalation", "args": {}}
         ],
         "must_escalate": true,
         "keywords": ["转人工", "投诉", "封禁", "申诉"]

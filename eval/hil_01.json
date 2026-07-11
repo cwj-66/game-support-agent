@@ -3,12 +3,12 @@
     "id": "hil_01",
     "category": "human_in_loop",
     "subcategory": "llm_escalate_account_stolen",
-    "scenario": "用户账号被盗并强烈要求转人工客服，验证能否进入escalate_to_human节点",
+    "scenario": "用户账号被盗并强烈要求转人工客服，验证能否调用 propose_human_escalation",
     "user_id": "10012",
     "question": "我的账号好像被盗了！能帮我转人工客服吗？我很着急！",
-    "ground_truth": "您好，非常理解您着急的心情。已为您转接人工客服处理账号被盗的问题，客服同事会尽快处理，请耐心等待。",
+    "ground_truth": "您好，非常理解您着急的心情。已为您整理问题，请通过按钮确认是否转接人工客服处理账号被盗问题。",
     "expected_tool_sequence": [
-      {"name": "escalate_to_human", "args": {}}
+      {"name": "propose_human_escalation", "args": {}}
     ],
     "must_escalate": true,
     "keywords": ["人工", "转接", "账号被盗", "10012"]

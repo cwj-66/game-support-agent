@@ -123,8 +123,7 @@ async def run_single(graph, case: Dict) -> Dict:
             "messages": [],
             "final_response": "",
             "actual_tools": [],
-            "interrupt_info": None,
-            "has_interrupt": False,
+            "human_offer": None,
         }
 
     # 从 messages 中提取实际工具调用
@@ -143,9 +142,8 @@ async def run_single(graph, case: Dict) -> Dict:
         "node_trace": result.get("node_trace", []),
         "messages": result.get("messages", []),
         "final_response": result.get("final_response") or "",
-        "interrupt_info": result.get("interrupt_info"),
+        "human_offer": result.get("human_offer"),
         "actual_tools": actual_tools,
-        "has_interrupt": result.get("__interrupt__") is not None,
         "error": None,
     }
 
@@ -188,12 +186,15 @@ def score_tool_usage(case: Dict, result: Dict) -> Tuple[float, str]:
 
 
 def score_escalation(case: Dict, result: Dict) -> Tuple[float, str]:
-    """升等评分：must_escalate 为 true 时，human 节点被访问或有 interrupt 即满分"""
+    """升等评分：must_escalate 为 true 时，调用了 propose_human_escalation 或产生 human_offer 即满分"""
     if not case.get("must_escalate"):
         return 1.0, ""
-    if "human" in result.get("node_trace", []) or result.get("has_interrupt", False):
+    actual_tools = result.get("actual_tools", [])
+    if any(t["name"] == "propose_human_escalation" for t in actual_tools):
         return 1.0, ""
-    return 0.0, "应转人工但未触发 human 节点也未产生 interrupt"
+    if result.get("human_offer"):
+        return 1.0, ""
+    return 0.0, "应提议转人工但未调用 propose_human_escalation"
 
 
 def score_forbidden(case: Dict, result: Dict) -> Tuple[float, str, bool]:
@@ -575,14 +576,16 @@ async def main():
         missing = content_result.get("missing", [])
 
         # --- 综合总分 ---
-        # 判断是否为升等中断场景（graph 在 human 节点被 interrupt）
-        # 此时 agent 回复只是"正在转接人工"的固定句式，内容评分无区分度，跳过
-        is_escalation_interrupted = (
+        # 升等提议场景：agent 会返回 human_offer 按钮，内容评分权重下调
+        is_human_offer_case = (
             case.get("must_escalate")
-            and ("human" in result.get("node_trace", []) or result.get("has_interrupt", False))
+            and (
+                result.get("human_offer")
+                or any(t["name"] == "propose_human_escalation" for t in result.get("actual_tools", []))
+            )
         )
 
-        if is_escalation_interrupted:
+        if is_human_offer_case:
             # 升等中断场景：内容评分无意义
             # 权重重新分配：工具 45% + 升等 35% + 禁止 20%
             total_score = (
@@ -610,8 +613,8 @@ async def main():
             reasons.append(f"[升等] {esc_reason}")
         if forbid_reason:
             reasons.append(f"[禁止] {forbid_reason}")
-        if is_escalation_interrupted:
-            reasons.append("[内容] 升等中断，跳过内容评分（权重重新分配）")
+        if is_human_offer_case:
+            reasons.append("[内容] 转人工提议场景，跳过内容评分（权重重新分配）")
         elif missing:
             reasons.append(f"[内容] 遗漏: {'; '.join(missing)}")
         if is_blocked:

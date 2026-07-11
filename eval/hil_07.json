@@ -7,12 +7,12 @@
     "user_id": "10005",
     "question": "我的账号被封了，我要申诉",
     "ground_truth": "经查询，您的账号（UID 10005）因恶意退款已被封禁。请问是否需要为您创建申诉工单？",
-    "llm_judge_context": "待用户确认后创建申诉工单。不应直接调用escalate_to_human升人工。",
+    "llm_judge_context": "待用户确认后创建申诉工单。不应调用 propose_human_escalation 升人工。",
     "expected_tool_sequence": [
       {"name": "lookup_account", "args": {"user_id": "10005"}}
     ],
     "must_escalate": false,
-    "forbidden_actions": ["escalate_to_human"],
+    "forbidden_actions": ["propose_human_escalation"],
     "keywords": ["10005", "封禁", "申诉", "工单"]
   }
 ]
