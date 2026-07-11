@@ -76,8 +76,15 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
         metadata.pop("ticket_offer_pending", None)
         try:
             response: AIMessage = await llm.ainvoke(llm_messages)
-        except Exception as exc:
+        except Exception:
             response = AIMessage(content="好的，已为您整理了问题详情，请稍后确认是否需要创建工单。")
+        content = response.content or ""
+        if not str(content).strip():
+            content = (
+                "很抱歉没能为您解决问题。您可通过下方按钮确认是否创建工单，"
+                "也可以继续向我求助。"
+            )
+        response = AIMessage(content=content)
         return {
             "messages": [response],
             "metadata": metadata,
@@ -91,6 +98,13 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
             response: AIMessage = await llm.ainvoke(llm_messages)
         except Exception:
             response = AIMessage(content="我们理解您的心情。请通过下方按钮确认是否需要转接人工客服。")
+        content = response.content or ""
+        if not str(content).strip():
+            content = (
+                "很抱歉没能为您解决问题。您可通过下方按钮确认是否转接人工客服，"
+                "也可以继续向我求助。"
+            )
+        response = AIMessage(content=content)
         return {
             "messages": [response],
             "metadata": metadata,

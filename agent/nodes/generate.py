@@ -30,7 +30,27 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
             SystemMessage(content=CUSTOMER_SERVICE_PROMPT),
             *messages,
         ])
-        final_response = ai_result.content
+        final_response = ai_result.content or ""
+
+        # 部分模型在转人工/工单场景会返回空串，用兜底文案避免前端显示占位符
+        if not str(final_response).strip():
+            for msg in reversed(messages):
+                if isinstance(msg, AIMessage) and msg.content and str(msg.content).strip():
+                    final_response = msg.content
+                    break
+        if not str(final_response).strip():
+            if state.get("human_offer"):
+                final_response = (
+                    "很抱歉没能为您解决问题。您可通过下方按钮确认是否转接人工客服，"
+                    "也可以继续向我求助。"
+                )
+            elif state.get("ticket_offer"):
+                final_response = (
+                    "很抱歉没能为您解决问题。您可通过下方按钮确认是否创建工单，"
+                    "也可以继续向我求助。"
+                )
+            else:
+                final_response = "很抱歉没能为您解决问题，您可以继续向我求助。"
 
     else:
         final_response = "抱歉，我暂时无法回答这个问题，建议联系人工客服。"
