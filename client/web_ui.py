@@ -1,6 +1,6 @@
 """
 Streamlit 客服工作台
-整合人工审核（Human-in-loop）+ 工单管理两个核心功能
+整合人工接待 + 工单管理两个核心功能
 """
 
 import streamlit as st
@@ -49,13 +49,32 @@ class ReviewAPIClient:
             st.error(f"获取待审核任务失败: {e}")
             return []
 
+    async def get_session_history(self, session_id: str) -> list:
+        """获取线程完整短期对话"""
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as c:
+                r = await c.get(f"{self.base_url}/human/history/{session_id}")
+                r.raise_for_status()
+                return r.json().get("messages", [])
+        except Exception:
+            return []
+
+    async def join_session(self, session_id: str) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as c:
+                r = await c.post(f"{self.base_url}/human/join/{session_id}")
+                return r.is_success
+        except Exception:
+            return False
+
     async def submit_review(
-        self, session_id: str, reply: str, reviewer_id: str
+        self, session_id: str, reply: str, reviewer_id: str, action: str = "continue"
     ) -> bool:
         try:
             payload = {
                 "reply": reply,
                 "reviewer_id": reviewer_id,
+                "action": action,
             }
             async with httpx.AsyncClient(timeout=30.0) as c:
                 r = await c.post(f"{self.base_url}/human/review/{session_id}", json=payload)
@@ -154,11 +173,24 @@ def _render_hil_mini(task: dict, client: ReviewAPIClient):
         st.markdown(f"**Agent回复**：{task.get('agent_response', '无')}")
         st.markdown(f"**触发原因**：{task.get('interrupt_reason', '未知')}")
 
-        # 显示工具执行上下文（如有）
+        # 线程完整对话
+        history = asyncio.run(client.get_session_history(session_id))
+        if history:
+            with st.expander("💬 查看完整对话", expanded=True):
+                for msg in history:
+                    role = msg.get("role", "")
+                    label = {"user": "玩家", "agent": "AI", "human_agent": "客服"}.get(role, role)
+                    st.markdown(f"**{label}**：{msg.get('content', '')}")
+
         pending_ctx = task.get("pending_content")
         if pending_ctx:
-            with st.expander("📋 查看工具执行上下文", expanded=False):
+            with st.expander("📋 问题摘要", expanded=False):
                 st.text(pending_ctx)
+
+        if st.button("👋 接入会话", key=f"hil_join_{session_id}"):
+            if asyncio.run(client.join_session(session_id)):
+                st.success("已发送接入提示")
+                st.rerun()
 
         reviewer_id = st.session_state.get("reviewer_id", "admin_001")
         reply = st.text_area(
@@ -168,14 +200,25 @@ def _render_hil_mini(task: dict, client: ReviewAPIClient):
             placeholder="请输入回复内容，将直接发送给用户…",
         )
 
-        if st.button("✅ 提交回复", key=f"hil_submit_{session_id}", use_container_width=True, type="primary"):
-            if not reply.strip():
-                st.warning("请填写回复内容")
-            else:
-                ok = asyncio.run(client.submit_review(session_id, reply, reviewer_id))
-                if ok:
-                    st.success("审核已提交，回复已发送给用户")
-                    st.rerun()
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("💬 发送回复", key=f"hil_submit_{session_id}", use_container_width=True, type="primary"):
+                if not reply.strip():
+                    st.warning("请填写回复内容")
+                else:
+                    ok = asyncio.run(client.submit_review(session_id, reply, reviewer_id, "continue"))
+                    if ok:
+                        st.success("回复已发送")
+                        st.rerun()
+        with col_b:
+            if st.button("🔚 结束接待", key=f"hil_close_{session_id}", use_container_width=True):
+                if not reply.strip():
+                    st.warning("结束接待时请填写最后一条回复")
+                else:
+                    ok = asyncio.run(client.submit_review(session_id, reply, reviewer_id, "close"))
+                    if ok:
+                        st.success("接待已结束")
+                        st.rerun()
 
 
 def _render_compact_ticket(ticket: dict, client: TicketClient):
@@ -286,7 +329,7 @@ def _ticket_card(ticket: dict, client: TicketClient):
             st.caption(
                 f"创建时间：{ticket.get('created_at', '')}　"
                 f"解决时间：{ticket.get('resolved_at', '未解决')}　"
-                f"人工审核：{'是' if ticket.get('human_reviewed') else '否'}"
+                f"人工处理：{'是' if ticket.get('human_reviewed') else '否'}"
             )
     else:
         with st.expander("📋 查看完整信息", expanded=False):
@@ -296,7 +339,7 @@ def _ticket_card(ticket: dict, client: TicketClient):
             st.caption(
                 f"创建时间：{ticket.get('created_at', '')}　"
                 f"解决时间：{ticket.get('resolved_at', '未解决')}　"
-                f"人工审核：{'是' if ticket.get('human_reviewed') else '否'}"
+                f"人工处理：{'是' if ticket.get('human_reviewed') else '否'}"
             )
 
     st.divider()
@@ -317,8 +360,8 @@ def render_workspace(review_client: ReviewAPIClient, ticket_client: TicketClient
     c2.metric("等待处理", stats.get("pending", 0))
     c3.metric("处理中", stats.get("processing", 0))
     c4.metric("已解决", stats.get("resolved", 0))
-    c5.metric("待审核", len(pending_tasks))
-    c6.metric("人工审核", stats.get("human_reviewed", 0))
+    c5.metric("待接待", len(pending_tasks))
+    c6.metric("人工处理", stats.get("human_reviewed", 0))
 
     st.markdown("---")
 

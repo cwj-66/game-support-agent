@@ -30,8 +30,8 @@ class GameSupportCLI:
     
     功能：
     - 发送对话消息
-    - 查看待审核任务
-    - 执行人工审核操作
+    - 查看待接待会话
+    - 客服发送人工接待消息
     - 查看对话历史
     """
     
@@ -68,10 +68,10 @@ class GameSupportCLI:
                 border_style="green"
             ))
             
-            # 检查是否需要审核
-            if data.get("requires_review"):
+            # 人工接待中
+            if data.get("status") == "human_chat":
                 console.print(
-                    f"[yellow]⚠️ 此回复需要人工审核 (Review ID: {data.get('review_id')})[/yellow]"
+                    f"[yellow]⏳ 已进入人工接待，等待客服回复 (Session: {data.get('session_id')})[/yellow]"
                 )
             
             # 显示元数据
@@ -83,8 +83,8 @@ class GameSupportCLI:
             console.print(f"[red]请求失败: {e}[/red]")
     
     async def list_pending(self):
-        """列出待审核任务"""
-        console.print("[dim]获取待审核任务...[/dim]")
+        """列出待接待会话"""
+        console.print("[dim]获取待接待会话...[/dim]")
         
         try:
             response = await self.client.get(
@@ -97,24 +97,21 @@ class GameSupportCLI:
             total = data.get("total", 0)
             
             if not items:
-                console.print("[yellow]暂无待审核任务[/yellow]")
+                console.print("[yellow]暂无待接待会话[/yellow]")
                 return
-            
-            # 创建表格
+
             table = Table(
-                title=f"待审核任务列表 (共 {total} 个)",
+                title=f"待接待会话列表 (共 {total} 个)",
                 box=box.ROUNDED
             )
-            table.add_column("Review ID", style="cyan")
-            table.add_column("Session", style="magenta")
+            table.add_column("Session", style="cyan")
             table.add_column("用户问题", style="green", max_width=30)
             table.add_column("风险等级", style="red")
             table.add_column("等待时间", style="yellow")
             
             for item in items:
                 table.add_row(
-                    item.get("review_id", "")[:8],
-                    item.get("session_id", "")[:8],
+                    item.get("session_id", "")[:12],
                     item.get("user_query", "")[:30] + "...",
                     item.get("risk_level", "unknown"),
                     f"{item.get('wait_time_seconds', 0)}s"
@@ -125,19 +122,22 @@ class GameSupportCLI:
         except httpx.HTTPError as e:
             console.print(f"[red]请求失败: {e}[/red]")
     
-    async def review(self, session_id: str, action: str, modified: Optional[str] = None, reviewer: str = "cli_user"):
-        """执行人工审核"""
-        console.print(f"[dim]提交审核操作: {action}...[/dim]")
-        
+    async def send_human_reply(
+        self,
+        session_id: str,
+        reply: str,
+        action: str = "continue",
+        reviewer: str = "cli_user",
+    ):
+        """客服发送人工接待消息"""
+        console.print(f"[dim]提交接待操作: {action}...[/dim]")
+
         payload = {
-            "session_id": session_id,
-            "action": action.upper(),
-            "reviewer_id": reviewer
+            "reply": reply,
+            "reviewer_id": reviewer,
+            "action": action.lower(),
         }
-        
-        if modified:
-            payload["modified_content"] = modified
-        
+
         try:
             response = await self.client.post(
                 f"{self.api_url}/human/review/{session_id}",
@@ -145,14 +145,14 @@ class GameSupportCLI:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             if data.get("success"):
-                console.print(f"[green]✓ 审核成功[/green]")
+                console.print("[green]✓ 发送成功[/green]")
                 console.print(f"操作: {data.get('action')}")
-                console.print(f"最终回复: {data.get('final_response')[:100]}...")
+                console.print(f"消息: {data.get('final_response')[:100]}...")
             else:
-                console.print(f"[red]✗ 审核失败[/red]")
-                
+                console.print("[red]✗ 发送失败[/red]")
+
         except httpx.HTTPError as e:
             console.print(f"[red]请求失败: {e}[/red]")
     
@@ -161,8 +161,8 @@ class GameSupportCLI:
         console.print(Panel.fit(
             "[bold blue]游戏客服Agent CLI[/bold blue]\n"
             "输入消息与Agent对话，或输入命令:\n"
-            "  [yellow]/pending[/yellow] - 查看待审核任务\n"
-            "  [yellow]/review <session_id> <action>[/yellow] - 审核操作\n"
+            "  [yellow]/pending[/yellow] - 查看待接待会话\n"
+            "  [yellow]/reply <session_id> <continue|close> <消息>[/yellow] - 客服回复\n"
             "  [yellow]/quit[/yellow] - 退出",
             title="欢迎使用",
             border_style="blue"
@@ -178,7 +178,7 @@ class GameSupportCLI:
                 
                 # 命令处理
                 if user_input.startswith("/"):
-                    parts = user_input[1:].split(maxsplit=2)
+                    parts = user_input[1:].split(maxsplit=3)
                     cmd = parts[0].lower()
                     
                     if cmd == "quit" or cmd == "exit":
@@ -188,13 +188,12 @@ class GameSupportCLI:
                     elif cmd == "pending":
                         await self.list_pending()
                     
-                    elif cmd == "review":
-                        if len(parts) < 3:
-                            console.print("[red]用法: /review <session_id> <APPROVE|MODIFY|OVERRIDE> [content][/red]")
+                    elif cmd == "reply":
+                        if len(parts) < 4:
+                            console.print("[red]用法: /reply <session_id> <continue|close> <消息内容>[/red]")
                             continue
-                        _, session_id, action = parts[:3]
-                        modified = parts[3] if len(parts) > 3 else None
-                        await self.review(session_id, action, modified)
+                        session_id, action, reply_text = parts[1], parts[2], parts[3]
+                        await self.send_human_reply(session_id, reply_text, action)
                     
                     else:
                         console.print(f"[red]未知命令: {cmd}[/red]")

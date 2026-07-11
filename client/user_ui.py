@@ -63,15 +63,25 @@ class APIClient:
         except Exception:
             return None
 
-    async def check_review_status(self, session_id: str) -> dict:
-        """查询会话的审核状态"""
+    async def get_human_reply(self, session_id: str) -> dict:
+        """轮询人工客服回复"""
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as c:
+                r = await c.get(f"{API_BASE_URL}/chat/reply/{session_id}")
+                r.raise_for_status()
+                return r.json()
+        except Exception:
+            return {"status": "pending"}
+
+    async def check_human_status(self, session_id: str) -> dict:
+        """查询会话是否在人工接待中"""
         try:
             async with httpx.AsyncClient(timeout=10.0) as c:
                 r = await c.get(f"{API_BASE_URL}/human/status/{session_id}")
                 r.raise_for_status()
                 return r.json()
         except Exception:
-            return {"has_pending_review": True}
+            return {"has_pending_human": True}
 
 
 # ── 页面 ──
@@ -124,33 +134,38 @@ def chat_tab(client: APIClient):
                 )
                 response = result.get("response", "抱歉，暂时无法处理，请稍后再试。")
 
-                if result.get("status") == "under_review":
-                    # 显示审核等待提示
+                if result.get("status") == "human_chat":
                     st.info(response)
-                    st.session_state.messages.append({"role": "assistant", "content": response + "\n\n⏳ *正在等待专员审核…*"})
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": response + "\n\n⏳ *客服接待中，请稍候…*",
+                    })
 
-                    # 轮询审核状态，每 5 秒一次
-                    with st.spinner("专员正在审核中，请稍候…"):
+                    final_response = None
+                    with st.spinner("客服接待中，等待回复…"):
                         sid = st.session_state.session_id
                         while True:
                             time.sleep(5)
-                            status = asyncio.run(client.check_review_status(sid))
-                            if not status.get("has_pending_review"):
+                            poll = asyncio.run(client.get_human_reply(sid))
+                            if poll.get("status") == "completed" and poll.get("reply"):
+                                final_response = poll["reply"]
+                                break
+                            status = asyncio.run(client.check_human_status(sid))
+                            if not status.get("has_pending_human"):
                                 break
 
-                    # 审核完成，从历史中获取最终回复
-                    history = asyncio.run(client.get_history(sid))
-                    final_response = None
-                    if history:
-                        for msg in reversed(history):
-                            if msg.get("role") == "assistant" and not msg.get("requires_review"):
-                                final_response = msg["content"]
-                                break
                     if not final_response:
-                        final_response = "专员已处理完成，请查看工单进度或重新提问。"
-                    st.success("✅ 专员已处理完成")
+                        history = asyncio.run(client.get_history(sid))
+                        if history:
+                            for msg in reversed(history):
+                                if msg.get("role") == "assistant":
+                                    final_response = msg["content"]
+                                    break
+
+                    if not final_response:
+                        final_response = "客服已处理，请继续提问。"
+                    st.success("✅ 收到客服回复")
                     st.markdown(final_response)
-                    # 更新最后一条 assistant 消息为最终回复
                     st.session_state.messages[-1] = {"role": "assistant", "content": final_response}
                 else:
                     st.markdown(response)
