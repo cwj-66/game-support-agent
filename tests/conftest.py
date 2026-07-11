@@ -35,34 +35,17 @@ def sample_faq_data() -> list:
 
 
 @pytest.fixture
-def sensitive_words() -> list:
-    """测试用敏感词列表"""
-    return ["封号", "退款", "投诉", "举报"]
-
-
-@pytest.fixture
 def mock_agent_state():
     """模拟Agent状态"""
     return {
         "messages": [],
         "user_query": "测试问题",
         "session_id": "test_session_001",
-        "interrupt_info": None,
-        "human_review": None,
+        "human_mode": False,
+        "human_offer": None,
         "tool_calls": [],
         "final_response": None,
         "metadata": {}
-    }
-
-
-@pytest.fixture
-def mock_interrupt_decision():
-    """模拟中断决策"""
-    return {
-        "should_interrupt": True,
-        "reason": "检测到敏感词",
-        "level": "high",
-        "sensitive_words": ["投诉"]
     }
 
 
