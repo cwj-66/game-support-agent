@@ -4,8 +4,9 @@
 消息直接写入 checkpoint，不经过 LangGraph interrupt。
 """
 
+import asyncio
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
@@ -42,13 +43,29 @@ async def list_pending_sessions(
     pending = await get_all_pending()
     now = datetime.now(timezone.utc)
 
+    from app.core.config import get_settings
+    idle_limit = get_settings().HUMAN_USER_IDLE_SECONDS
+
     tasks: list[PendingHumanSession] = []
+    expired_sessions: list[str] = []
+
     for session_id, payload in pending.items():
         created_at = payload.get("timestamp", now.isoformat())
         try:
             elapsed = (now - datetime.fromisoformat(created_at)).total_seconds()
         except (ValueError, TypeError):
             elapsed = 0
+
+        # 检查用户空闲超时
+        last_user_at_str = payload.get("last_user_at")
+        if last_user_at_str:
+            try:
+                idle_secs = (now - datetime.fromisoformat(last_user_at_str)).total_seconds()
+                if idle_secs > idle_limit:
+                    expired_sessions.append(session_id)
+                    continue
+            except (ValueError, TypeError):
+                pass
 
         tasks.append(PendingHumanSession(
             session_id=session_id,
@@ -59,14 +76,33 @@ async def list_pending_sessions(
             created_at=created_at,
             wait_time_seconds=int(elapsed),
             pending_content=payload.get("summary"),
+            last_user_at=payload.get("last_user_at"),
+            last_agent_at=payload.get("last_agent_at"),
         ))
+
+    # 异步清理超时会话（不阻塞响应）
+    if expired_sessions:
+        asyncio.create_task(_auto_close_idle_sessions(expired_sessions))
 
     return PendingHumanSessionsResponse(total=len(tasks), items=tasks)
 
 
+async def _auto_close_idle_sessions(session_ids: list[str]) -> None:
+    """空闲超时：发送结束通知给玩家并清除接待状态"""
+    for sid in session_ids:
+        try:
+            await append_agent_message(
+                sid,
+                "您好，由于长时间未收到您的回复，本次客服接待已自动结束。如需帮助请重新发起会话。",
+            )
+            await close_human_session(sid)
+        except Exception:
+            pass
+
+
 class HumanReplyRequest(BaseModel):
     """客服发送消息请求"""
-    reply: str = Field(..., description="客服回复内容")
+    reply: Optional[str] = Field(default=None, description="客服回复内容（close 时可为空）")
     reviewer_id: str = Field(..., description="客服标识")
     action: HumanSessionAction = Field(default="continue", description="接待操作: continue / close")
 
@@ -87,23 +123,29 @@ async def send_agent_message(
         raise HumanReviewNotPendingException(session_id)
 
     action: HumanSessionAction = body.action if body.action in ("continue", "close") else "continue"
-
-    await append_agent_message(session_id, body.reply)
-
     processed_at = datetime.now(timezone.utc).isoformat()
+    reply_text = (body.reply or "").strip()
 
     if action == "close":
+        # 结束接待：有回复就写入，没有就只发结束通知
+        if reply_text:
+            await append_agent_message(session_id, reply_text)
+        await append_agent_message(session_id, "本次接待已结束，感谢您的耐心等候。")
         await close_human_session(session_id)
     else:
+        if not reply_text:
+            raise HTTPException(status_code=422, detail="继续接待时回复内容不能为空")
+        await append_agent_message(session_id, reply_text)
         pending_payload = await get_pending(session_id) or {}
         pending_payload["timestamp"] = processed_at
+        pending_payload["last_agent_at"] = processed_at
         await add_pending(session_id, pending_payload)
 
     return HumanReplyResponse(
         success=True,
         session_id=session_id,
         action=action,
-        final_response=body.reply,
+        final_response=reply_text,
         processed_at=processed_at,
     )
 

@@ -42,7 +42,11 @@ async def append_session_messages(
         values.update(extra_state)
 
     g = await get_graph()
-    await g.aupdate_state(graph_config(session_id), values)
+    # 根图无子图：aupdate_state 不能带 checkpoint_ns，否则会报 Subgraph not found
+    await g.aupdate_state(
+        {"configurable": {"thread_id": session_id}},
+        values,
+    )
 
 
 async def append_agent_reply(session_id: str, content: str, **extra_state: Any) -> None:

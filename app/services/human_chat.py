@@ -63,13 +63,16 @@ async def enter_human_mode(session_id: str) -> dict[str, Any]:
     values = await get_channel_values(session_id)
     human_offer = values.get("human_offer") or {}
 
+    now_iso = datetime.now(timezone.utc).isoformat()
     payload = {
         "session_id": session_id,
         "user_id": values.get("user_id", ""),
         "user_query": values.get("user_query", ""),
         "summary": human_offer.get("summary", ""),
         "waiting_for": "human_chat",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso,
+        "last_user_at": now_iso,
+        "last_agent_at": None,
     }
     await add_pending(session_id, payload)
 

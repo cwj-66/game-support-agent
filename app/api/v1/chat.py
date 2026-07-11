@@ -40,6 +40,28 @@ from app.services.human_chat import (
 router = APIRouter(prefix="/chat", tags=["对话"])
 
 
+def _normalize_response(
+    final_response: str,
+    ticket_offer: dict | None = None,
+    human_offer: dict | None = None,
+) -> str:
+    """空回复时返回委婉兜底文案，避免前端显示「（无回复内容）」"""
+    text = (final_response or "").strip()
+    if text:
+        return text
+    if human_offer:
+        return (
+            "很抱歉没能为您解决问题。您可通过下方按钮确认是否转接人工客服，"
+            "也可以继续向我求助。"
+        )
+    if ticket_offer:
+        return (
+            "很抱歉没能为您解决问题。您可通过下方按钮确认是否创建工单，"
+            "也可以继续向我求助。"
+        )
+    return "很抱歉没能为您解决问题，您可以继续向我求助。"
+
+
 def _node_to_progress(node_name: str) -> str:
     """将节点名称映射为用户友好的进度描述"""
     mapping = {
@@ -72,6 +94,12 @@ async def send_message(
     if await get_pending(request.session_id) or await is_human_mode(request.session_id):
         try:
             await append_user_message(request.session_id, request.message)
+            # 更新用户最后发言时间
+            pending = await get_pending(request.session_id)
+            if pending:
+                pending["last_user_at"] = datetime.now(timezone.utc).isoformat()
+                from app.services.pending_store import add_pending
+                await add_pending(request.session_id, pending)
             execution_time_ms = int((time.perf_counter() - start_time) * 1000)
             return ChatResponse(
                 session_id=request.session_id,
@@ -90,10 +118,16 @@ async def send_message(
             user_query=request.message,
         )
 
-        execution_time_ms = int((time.perf_counter() - start_time) * 1000)
-        final_response = result.get("final_response") or ""
-
         raw_ticket = result.get("ticket_offer")
+        raw_human = result.get("human_offer")
+
+        execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+        final_response = _normalize_response(
+            result.get("final_response") or "",
+            ticket_offer=raw_ticket if isinstance(raw_ticket, dict) else None,
+            human_offer=raw_human if isinstance(raw_human, dict) else None,
+        )
+
         ticket_offer_obj = None
         if raw_ticket and isinstance(raw_ticket, dict):
             ticket_offer_obj = TicketOffer(
@@ -101,7 +135,6 @@ async def send_message(
                 issue_type=raw_ticket.get("issue_type", "other"),
             )
 
-        raw_human = result.get("human_offer")
         human_offer_obj = None
         if raw_human and isinstance(raw_human, dict):
             human_offer_obj = HumanOffer(
@@ -159,11 +192,15 @@ async def get_chat_history(
         else:
             continue
 
+        is_human = isinstance(msg, AIMessage) and bool(
+            (msg.additional_kwargs or {}).get("human_source")
+        )
         items.append(
             ChatHistoryItem(
                 role=role,
                 content=msg.content if isinstance(msg.content, str) else str(msg.content),
                 timestamp=checkpoint_ts,
+                is_human=is_human,
             )
         )
 

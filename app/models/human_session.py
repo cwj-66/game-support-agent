@@ -20,6 +20,8 @@ class PendingHumanSession(BaseModel):
     created_at: str = Field(..., description="进入待接待队列的时间")
     wait_time_seconds: int = Field(default=0, description="等待接待的秒数")
     pending_content: Optional[str] = Field(default=None, description="上下文摘要（客服参考）")
+    last_user_at: Optional[str] = Field(default=None, description="用户最后发言时间 ISO8601")
+    last_agent_at: Optional[str] = Field(default=None, description="客服最后发言时间 ISO8601")
 
 
 class HumanReplyResponse(BaseModel):

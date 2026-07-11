@@ -142,6 +142,10 @@ class Settings(BaseSettings):
         default=7200,
         description="客服会话 TTL（秒），默认 2 小时无活动后会话过期，下次消息开新线程",
     )
+    HUMAN_USER_IDLE_SECONDS: int = Field(
+        default=300,
+        description="人工接待中用户空闲超时（秒），超时后自动结束接待并通知玩家",
+    )
 
     # 数据库配置
     DB_PATH: str = Field(
