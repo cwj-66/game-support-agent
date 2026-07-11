@@ -1,12 +1,30 @@
 # ============================================================
-# Game Support Agent Docker Compose 配置
-# 同时启动 RAG服务 + 本项目
+# Game Support Agent Docker Compose
+# mysql + redis + agent-api + web-ui 同一项目，一条命令一起启动：
+#   docker compose up -d
 # ============================================================
 
-version: '3.8'
-
 services:
-  # ==================== Redis（待审核队列持久化） ====================
+  mysql:
+    image: mysql:8.0
+    container_name: game-support-mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pass
+      MYSQL_DATABASE: game_support
+      MYSQL_USER: game_support
+      MYSQL_PASSWORD: game_support_pass
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./scripts/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot_pass"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis/redis-stack-server:latest
     container_name: game-support-redis
@@ -16,8 +34,6 @@ services:
       - REDIS_ARGS=--appendonly yes
     volumes:
       - redis-data:/data
-    networks:
-      - game-support-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -25,7 +41,6 @@ services:
       timeout: 3s
       retries: 3
 
-  # ==================== RAG 服务 ====================
   rag-service:
     image: enterprise-rag:latest
     container_name: game-support-rag
@@ -36,20 +51,13 @@ services:
       - LOG_LEVEL=INFO
     volumes:
       - rag-data:/app/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - game-support-network
+    restart: unless-stopped
 
-  # ==================== Agent API 服务 ====================
   agent-api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: game-support-agent
+    container_name: game-support-agent-api
     ports:
       - "8002:8002"
     environment:
@@ -62,25 +70,23 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - HIL_ENABLED=${HIL_ENABLED:-true}
       - API_KEY=${API_KEY}
+      - GAME_JWT_SECRET=${GAME_JWT_SECRET}
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=game_support
+      - MYSQL_PASSWORD=game_support_pass
+      - MYSQL_DATABASE=game_support
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
     depends_on:
-      rag-service:
-        condition: service_started
       redis:
         condition: service_healthy
-    networks:
-      - game-support-network
+      mysql:
+        condition: service_healthy
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  # ==================== Streamlit Web UI ====================
   web-ui:
     build:
       context: .
@@ -92,15 +98,9 @@ services:
       - API_BASE_URL=http://agent-api:8002/api/v1
     depends_on:
       - agent-api
-    networks:
-      - game-support-network
+    restart: unless-stopped
 
 volumes:
-  rag-data:
-    driver: local
+  mysql-data:
   redis-data:
-    driver: local
-
-networks:
-  game-support-network:
-    driver: bridge
+  rag-data:

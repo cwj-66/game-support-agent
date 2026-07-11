@@ -43,7 +43,7 @@ def check_ticket(user_id: str, ticket_id: str = "") -> dict:
         user_id: 玩家 UID
         ticket_id: 工单号（格式 TK-YYYYMMDD-XXXX），玩家提供了就传，否则自动查该玩家最近工单
     """
-    from app.core.ticket_service import check_ticket_core
+    from app.services.ticket_service import check_ticket_core
     return check_ticket_core(user_id, ticket_id)
 
 
@@ -61,7 +61,7 @@ def lookup_account(user_id: str, fields: str = "") -> dict:
                 可用值: status（封禁状态）/ recharge（充值记录）/ login（登录信息）。
                 不传时返回全部。
     """
-    from app.core.account_service import lookup_account_core
+    from app.services.account_service import lookup_account_core
     return lookup_account_core(user_id, fields)
 
 

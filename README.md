@@ -1,6 +1,6 @@
 # Game Support Agent
 
-基于 LangGraph 的游戏客服 Agent，实现 LLM 自主处理 + RAG 知识库 + Human-in-loop 审核的完整闭环；含 ~25 条评测用例、LLM-as-Judge 评估框架，streaming 响应延迟 ~3.9s。
+基于 LangGraph 的游戏客服 Agent，实现 LLM 自主处理 + RAG 知识库 + 人工接待的完整闭环；含 ~25 条评测用例、LLM-as-Judge 评估框架，streaming 响应延迟 ~3.9s。
 
 ## 项目架构
 
@@ -33,7 +33,7 @@ game-support-agent/
 │   ├── main.py                     # 入口（CORS、路由、生命周期、MCP Client 初始化）
 │   ├── api/v1/
 │   │   ├── chat.py                 # POST /chat/send、GET /chat/history、POST /chat/stream
-│   │   ├── human.py                # 审核接口（pending、review、status）
+│   │   ├── human.py                # 人工接待接口（pending、reply、status）
 │   │   └── ticket.py               # 工单 CRUD 接口
 │   ├── core/
 │   │   ├── config.py               # pydantic-settings 配置管理
@@ -41,11 +41,11 @@ game-support-agent/
 │   │   ├── database.py             # SQLite 工单 CRUD（底层）
 │   │   ├── ticket_service.py       # 工单业务逻辑（create/check，供 MCP 与本地工具共用）
 │   │   ├── account_service.py      # 账号查询业务逻辑（供 MCP 与本地工具共用）
-│   │   ├── pending_store.py        # 待审核队列（内存）
+│   │   ├── pending_store.py        # 待接待队列（Redis）
 │   │   └── exceptions.py           # 5 种业务异常 + 全局处理器
 │   └── models/
 │       ├── chat.py                 # 对话请求/响应模型
-│       ├── review.py               # 审核请求/响应模型
+│       ├── human_session.py        # 人工接待请求/响应模型
 │       └── ticket.py               # 工单数据模型
 ├── safety/                          # 安全检测模块
 │   ├── detector.py                 # 敏感词正则匹配 + 工具失败检测
@@ -58,10 +58,12 @@ game-support-agent/
 │   ├── hil_01~07.json              # Human-in-loop 类别（7 题）
 │   ├── mc_01~05.json               # 多轮上下文类别（5 题）
 │   └── report_*.{csv,md}           # 评估报告
-├── client/                         # 客户端
+├── player-chat/                    # 玩家端（React + Vite + Ant Design）
+├── admin-ui/                       # 客服端（React + Vite + Ant Design）
+├── client/                         # 终端 CLI
 │   ├── cli.py                      # 终端 CLI（rich 库）
-│   ├── web_ui.py                   # 客服审核界面（Streamlit）
-│   └── user_ui.py                  # 用户聊天界面（Streamlit）
+│   ├── web_ui.py                   # 旧版 Streamlit 客服界面（可选）
+│   └── user_ui.py                  # 旧版 Streamlit 玩家界面（可选）
 ├── tests/
 │   ├── test_agent.py
 │   ├── test_safety.py
@@ -75,95 +77,6 @@ game-support-agent/
 ├── requirements.txt
 └── docker-compose.yml              # rag / agent-api / web-ui
 ```
-
-## 架构设计决策
-
-### 为什么用确定性条件边控制 human escalation（而非 LLM 自主判断）
-
-典型的 Agent 框架让 LLM 自行决定"是否需要转人工"，但游戏客服场景中 LLM 的判断不可靠——它可能在敏感话题上过度自信直接回复，也可能对常规问题误判为高风险。因此本项目采用**双层兜底**：
-
-1. **业务升等（LLM 触发）**：LLM 可调用 `request_human_escalation` 工具主动请求转人工，适用于 LLM 明确知道"这事我处理不了"的场景（如投诉、账号封禁申诉）。
-2. **安全兜底（图结构强制）**：无论 LLM 如何回复，`detector` 节点在 `generate` 之后强制执行敏感词检测和工具失败检查。命中规则时不触发 interrupt，而是**静默替换**回复内容为预设文案。这个节点是 Graph 的固定边，不由 LLM 控制，不可跳过。
-
-### detector 节点的静默拦截设计
-
-`detector` 节点不调用 `interrupt()`，而是直接修改 `state.final_response` 并记录拦截日志到 `state.metadata`。这样设计的原因是：
-- 敏感词命中或工具失败通常不需要人工介入（只是需要换一种说法回复用户）
-- 避免不必要的审核开销，只有 LLM 主动要求转人工时才走完整 HIL 路径
-- 拦截记录写入 metadata，可在后续审计中追溯
-
-### Human-in-loop 机制
-
-- **中断触发路径**：LLM 调用 `request_human_escalation` → `tool_exec` 设 `interrupt_info` → `human_handoff` 整理上下文 → `human` 节点 `interrupt()` 挂起
-- **审核操作**：审核员通过 API 提交回复字符串，`Command(resume=reply)` 恢复图执行，`human_reply` 作为最终回复（标记 `human_source=True`）
-
-### MCP 集成
-
-工具层采用 **MCP Server + MCP Client** 架构，业务逻辑与暴露层分离：
-
-```
-app/core/ticket_service.py   ─┐
-app/core/account_service.py  ─┤  业务逻辑（只写一次）
-app/core/database.py         ─┘
-         ↑              ↑
-mcp_server.py      agent/tools/*.py
-（@mcp.tool 注册）  （@tool 本地兜底）
-         ↑
-agent/tools/mcp_client.py → LangGraph reasoning / tool_exec
-```
-
-**MCP Server**（`mcp_server.py`，独立进程，端口 8001）暴露 4 个工具：
-- `create_ticket` / `check_ticket` / `lookup_account` / `query_knowledge`
-
-**MCP Client**（`agent/tools/mcp_client.py`）在 FastAPI 启动时连接 `http://localhost:8001/mcp`（streamable_http），发现并缓存工具。
-
-**工具选用策略**（`get_all_tools()`）：
-- MCP Server 已连接 → 使用 MCP 工具 + 本地 `request_human_escalation`（触发 interrupt，不能外置）
-- MCP Server 未连接 → 全部使用本地 LangChain 工具兜底
-
-**Graph 不感知 MCP**：`reasoning` 节点 `bind_tools()`，`tool_exec` 节点统一 `tool.ainvoke()`；MCP 工具由 `langchain-mcp-adapters` 转成 LangChain BaseTool，与本地工具调用方式相同。
-
-**启动 MCP（可选但推荐）**：
-
-```bash
-# 终端 1：MCP Server
-python mcp_server.py
-
-# 终端 2：FastAPI 主服务（启动时会自动连接 MCP）
-python -m app.main
-```
-
-连接成功时日志示例：`[MCP] MCP Server connected, discovered 4 tool(s)`
-
-### 工具层分层说明
-
-| 层级 | 文件 | 职责 |
-|------|------|------|
-| 核心逻辑 | `app/core/ticket_service.py`、`account_service.py` | 映射规则、读库写库、返回 dict |
-| MCP 暴露 | `mcp_server.py` | `@mcp.tool()` + Docstring（给 LLM 看）+ 调 service |
-| 本地兜底 | `agent/tools/ticket.py` 等 | `@tool` + Docstring + 调 service |
-| 图内专用 | `agent/tools/human_escalation.py` | 触发 LangGraph interrupt，不放入 MCP |
-
-Docstring 在 MCP 与本地各维护一份（参数签名可能不同，如 MCP 版 `check_ticket` 需显式传 `user_id`）；业务逻辑修改只需改 service 层。
-
-### 工单生命周期
-
-```
-玩家提交 / Agent 创建 → pending
-    ↓ 客服开始处理
-processing
-    ↓ 客服填写处理结果
-resolved
-    ↓ 玩家查询
-Agent 读取 agent_reply 返回给玩家
-```
-
-## 性能
-
-| 模式 | 响应时间 | 说明 |
-|------|----------|------|
-| Thinking mode（关闭前） | ~70s | LLM 思考过程占用大量时间 |
-| Streaming 模式 | ~3.9s | 关闭 thinking mode 后流式输出逐节点推送 |
 
 ## 快速开始
 
@@ -197,19 +110,26 @@ python -m app.main
 
 ### 3. 启动前端界面
 
-**用户界面**（玩家端 — 对话、提工单、查进度）：
+前端为 **React + Vite + Ant Design**
+
+**玩家端**
 
 ```bash
-streamlit run client/user_ui.py
+cd player-chat
+npm run dev
 ```
+默认访问 `http://localhost:5173`
 
-**客服界面**（客服端 — HIL 审核、工单处理）：
+**客服端**：
 
 ```bash
-streamlit run client/web_ui.py
+cd admin-ui
+npm run dev
 ```
+默认访问 `http://localhost:5174`
 
-两个界面可同时运行，共用同一个后端。
+
+两个界面可同时运行，共用 FastAPI 后端（`http://localhost:8002`）。
 
 ### 4. 运行评测
 
@@ -244,8 +164,8 @@ pytest --cov=agent --cov=safety --cov-report=html
 |------|------|------|
 | MCP Server（工具服务） | `python mcp_server.py` | 8001 |
 | FastAPI 后端 | `python -m app.main` | 8002 |
-| 用户界面 | `streamlit run client/user_ui.py` | 8501 |
-| 客服界面 | `streamlit run client/web_ui.py` | 8502 |
+| 玩家端（React） | `cd player-chat && npm run dev` | 5173 |
+| 客服端（React） | `cd admin-ui && npm run dev` | 5174 |
 | 终端 CLI | `python client/cli.py --session test_001 "问题"` | — |
 
 ## API 接口
@@ -273,13 +193,17 @@ PATCH  /api/v1/ticket/{ticket_id}     # 更新工单（客服处理）
 GET    /api/v1/ticket/stats           # 工单统计
 ```
 
-### 人工审核
+### 人工接待
 
 ```http
-GET   /api/v1/human/pending               # 待审核列表
-POST  /api/v1/human/review/{session_id}   # 提交审核结果（reply + reviewer_id）
-GET   /api/v1/human/status/{session_id}   # 查询审核状态
+GET   /api/v1/human/pending               # 待接待会话列表
+POST  /api/v1/human/review/{session_id}   # 客服发消息（reply + action: continue|close）
+POST  /api/v1/human/join/{session_id}     # 客服接入会话
+GET   /api/v1/human/status/{session_id}   # 查询是否在人工接待中
+GET   /api/v1/human/history/{session_id}  # 客服查看对话历史
 ```
+
+客服通过 `continue` 继续多轮对话，通过 `close` 结束接待。消息写入 LangGraph checkpoint，不经过 interrupt 挂起。
 
 ## Eval Framework
 
@@ -289,7 +213,7 @@ GET   /api/v1/human/status/{session_id}   # 查询审核状态
 |------|------|------|
 | RAG 检索 | 7 | 知识库查询准确性、置信度阈值、降级行为 |
 | 工具调用 | 8 | 账号查询、工单创建/查询、工具选择合规性 |
-| 审核 | 7 | 转人工触发、禁止操作拦截、安全兜底 |
+| 人工接待 | 7 | 转人工触发、禁止操作拦截、安全兜底 |
 | 多轮上下文 | 5 | 跨轮对话摘要、上下文连贯性 |
 | **合计** | **27** | |
 
@@ -323,7 +247,7 @@ GET   /api/v1/human/status/{session_id}   # 查询审核状态
 | LLM | 阿里云 DashScope (qwen-turbo) 优先，OpenAI 兜底 |
 | 评测 | LLM-as-Judge via qwen-max |
 | API 服务 | FastAPI + Pydantic |
-| 客户端 | Streamlit + rich CLI |
+| 客户端 | React + Vite + Ant Design（player-chat / admin-ui）+ rich CLI |
 | 持久化 | SQLite（LangGraph 状态 + 工单双库） |
 | 外部集成 | MCP Server（streamable_http）+ RAG HTTP |
 | 测试 | pytest |
