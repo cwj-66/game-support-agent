@@ -1,7 +1,4 @@
-"""
-客服回复生成节点
-结合工具查询结果和客服提示词，生成最终用户回复
-"""
+"""客服回复生成节点。"""
 
 from typing import Dict, Any
 
@@ -14,25 +11,19 @@ from app.core.config import get_settings
 
 
 async def generate_response_node(state: AgentState) -> Dict[str, Any]:
-    """
-    生成最终回复节点
-
-    结合用户问题和完整对话历史，用客服提示词生成最终回复
-    """
+    """结合对话历史生成最终客服回复。"""
     messages = state.get("messages", [])
 
     if messages:
         settings = get_settings()
         llm = get_chat_model(model_name=settings.GENERATE_MODEL_NAME)
 
-        # messages 已含完整会话原文（Human / AI / Tool），不再重复追加 user_query
         ai_result = await llm.ainvoke([
             SystemMessage(content=CUSTOMER_SERVICE_PROMPT),
             *messages,
         ])
         final_response = ai_result.content or ""
 
-        # 部分模型在转人工/工单场景会返回空串，用兜底文案避免前端显示占位符
         if not str(final_response).strip():
             for msg in reversed(messages):
                 if isinstance(msg, AIMessage) and msg.content and str(msg.content).strip():
@@ -59,7 +50,6 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
 
     metadata = state.get("metadata", {})
 
-    # 若有关联工单，回写 agent_reply（数据库不可用时静默跳过）
     ticket_id = state.get("ticket_id")
     if ticket_id:
         try:

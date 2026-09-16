@@ -1,7 +1,4 @@
-"""
-结束节点
-记录最终状态
-"""
+"""结束节点。"""
 
 from datetime import datetime, timezone
 from typing import Dict, Any

@@ -1,6 +1,4 @@
-"""
-会话归档：2h 过期前用 LLM 生成摘要写入长期记忆
-"""
+"""会话过期归档：LLM 摘要写入长期记忆。"""
 
 import logging
 from typing import Any
@@ -90,7 +88,6 @@ async def archive_session_before_clear(session_id: str) -> None:
         summary = result.content if isinstance(result.content, str) else str(result.content)
     except Exception as exc:
         logger.warning("archive: LLM summary failed for %s: %s", session_id, exc)
-        # 降级：简单拼接
         summary = f"玩家 {user_id} 本次会话共 {len(messages)} 条消息，结果：{outcome}"
 
     await save_session_summary(

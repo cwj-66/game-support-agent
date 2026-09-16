@@ -1,28 +1,6 @@
-"""
-批量评估 Agent 性能
+"""批量评估 Agent：硬评分 + LLM-as-Judge。
 
-三段式评估：
-  1. 跑 Agent：graph.invoke() 收集 node_trace + messages + final_response
-  2. 硬评分（程序逻辑）：
-     - tool_score: 预期工具调用召回率
-     - escalation_score: must_escalate 是否满足
-     - forbidden_score: forbidden_actions 是否触发（触发整题 0 分）
-  3. 内容 LLM Judge：
-     - 调 LLM（DashScope 优先）评估回复对信息点的覆盖程度
-     - 输出 CSV 报告
-
-用法:
-    python eval/evaluate.py
-    python eval/evaluate.py --category tool
-    python eval/evaluate.py --category rag
-    python eval/evaluate.py --skip-llm          # 跳过 LLM Judge
-    python eval/evaluate.py --max-cases 3       # 调试用
-    python eval/evaluate.py --output my_report.csv
-
-    python eval/evaluate.py --category tool --output eval/report_tool
-    python eval/evaluate.py --category rag  --output eval/report_rag
-    python eval/evaluate.py --category hil  --output eval/report_hil
-    python eval/evaluate.py --category mc   --output eval/report_mc
+用法: python eval/evaluate.py [--category tool|rag|hil|mc] [--skip-llm] [--output PATH]
 """
 
 import argparse
@@ -42,7 +20,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# 将项目根目录加入 sys.path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -53,20 +30,11 @@ from agent.graph import get_graph
 from agent.state import create_initial_state
 
 
-# ======================================================================
-# 配置
-# ======================================================================
-
 EVAL_DIR = Path(__file__).parent
 REPORT_PATH = EVAL_DIR / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-# LLM Judge 模型
 JUDGE_FALLBACK_MODEL = os.getenv("JUDGE_FALLBACK_MODEL", "qwen3.6-plus")
-JUDGE_TIMEOUT = 30  # 秒
+JUDGE_TIMEOUT = 30
 
-
-# ======================================================================
-# 1. 加载测试用例
-# ======================================================================
 
 def load_test_cases(category: Optional[str] = None) -> List[Dict]:
     """加载 eval/ 下所有 JSON 测试用例，category 按 case 的 category 字段过滤"""
@@ -87,10 +55,6 @@ def load_test_cases(category: Optional[str] = None) -> List[Dict]:
 
     return all_cases
 
-
-# ======================================================================
-# 2. 运行 Agent
-# ======================================================================
 
 async def run_single(graph, case: Dict) -> Dict:
     """对单个测试用例执行 graph.invoke()，返回执行结果"""
@@ -126,7 +90,6 @@ async def run_single(graph, case: Dict) -> Dict:
             "human_offer": None,
         }
 
-    # 从 messages 中提取实际工具调用
     actual_tools = []
     for msg in result.get("messages", []):
         tc = getattr(msg, "tool_calls", None)
@@ -148,10 +111,6 @@ async def run_single(graph, case: Dict) -> Dict:
     }
 
 
-# ======================================================================
-# 3. 硬评分
-# ======================================================================
-
 def score_tool_usage(case: Dict, result: Dict) -> Tuple[float, str]:
     """
     工具调用评分：expected_tool_sequence 的召回率
@@ -161,7 +120,6 @@ def score_tool_usage(case: Dict, result: Dict) -> Tuple[float, str]:
     actual_tools = result.get("actual_tools", [])
     actual_names = {t["name"] for t in actual_tools}
 
-    # 预期不应调用任何工具
     if case.get("expected_no_tools"):
         if actual_tools:
             names = [t["name"] for t in actual_tools]
@@ -215,10 +173,6 @@ def score_forbidden(case: Dict, result: Dict) -> Tuple[float, str, bool]:
     names = [v["name"] for v in violated]
     return 0.0, f"触发了禁止操作: {names}", True
 
-
-# ======================================================================
-# 4. LLM-as-Judge（内容评分）
-# ======================================================================
 
 def _build_judge_messages(actual_reply: str, ground_truth: str, scenario_context: Optional[str] = None) -> List[Dict]:
     """构造 LLM Judge 的 messages"""
@@ -351,10 +305,6 @@ async def llm_judge(actual_reply: str, ground_truth_text: str, scenario_context:
     return _keyword_fallback(actual_reply, ground_truth_text)
 
 
-# ======================================================================
-# 5. 输出
-# ======================================================================
-
 def write_csv(results: List[Dict], path: str):
     """输出 CSV 报告（utf-8-sig 供 Excel 直接打开）"""
     fieldnames = [
@@ -380,7 +330,6 @@ def write_markdown(results: List[Dict], path: str):
     with open(path, "w", encoding="utf-8") as f:
         f.write("# 评估报告\n\n")
 
-        # 汇总
         total = len(results)
         avg_tool = sum(r.get("tool_score", 0) or 0 for r in results) / total
         avg_esc = sum(r.get("escalation_score", 0) or 0 for r in results) / total
@@ -395,7 +344,6 @@ def write_markdown(results: List[Dict], path: str):
         f.write(f"**内容均分**: {avg_content:.2f}  |  ")
         f.write(f"**综合均分**: {avg_total:.2f}\n\n")
 
-        # 逐题表格
         f.write("## 逐题明细\n\n")
         f.write("| ID | 类别 | 工具分 | 升等分 | 禁止分 | 内容分 | 总分 | 失分原因 |\n")
         f.write("|----|------|--------|--------|--------|--------|------|----------|\n")
@@ -410,7 +358,6 @@ def write_markdown(results: List[Dict], path: str):
             reason = (r.get("failure_reason") or "")[:60]
             f.write(f"| {cid} | {cat} | {ts} | {es} | {fs} | {cs} | {tot} | {reason} |\n")
 
-        # 低分题详情
         low_score = [r for r in results if (r.get("total_score") or 1.0) < 0.5]
         if low_score:
             f.write("\n## 低分题\n\n")
@@ -420,7 +367,6 @@ def write_markdown(results: List[Dict], path: str):
                 if r.get("missing_info"):
                     f.write(f"  - 遗漏: {r['missing_info']}\n")
 
-        # 每个 case 的详情（折叠式）
         f.write("\n## 详情\n\n")
         for r in results:
             f.write(f"<details>\n")
@@ -445,7 +391,6 @@ def print_summary(results: List[Dict]):
         print("没有测试结果")
         return
 
-    # ---- 逐题 Markdown 表格 ----
     print(f"\n## 评估报告（共 {total} 题）\n")
     header = "| ID | 类别 | 工具分 | 升等分 | 禁止分 | 内容分 | 总分 | 失分原因 |"
     sep = "|----|------|--------|--------|--------|--------|------|----------|"
@@ -462,7 +407,6 @@ def print_summary(results: List[Dict]):
         reason = (r.get("failure_reason") or "")[:40]
         print(f"| {cid} | {cat} | {ts} | {es} | {fs} | {cs} | {tot} | {reason} |")
 
-    # ---- 汇总 ----
     avg_tool = sum(r.get("tool_score", 0) or 0 for r in results) / total
     avg_esc = sum(r.get("escalation_score", 0) or 0 for r in results) / total
     avg_forbid = sum(r.get("forbidden_score", 0) or 0 for r in results) / total
@@ -474,7 +418,6 @@ def print_summary(results: List[Dict]):
     print(f"|------|----------|----------|----------|----------|----------|")
     print(f"| 均分 | {avg_tool:.2f} | {avg_esc:.2f} | {avg_forbid:.2f} | {avg_content:.2f} | **{avg_total:.2f}** |")
 
-    # 按类别聚合
     by_cat = defaultdict(list)
     for r in results:
         by_cat[r.get("category", "unknown")].append(r)
@@ -484,7 +427,6 @@ def print_summary(results: List[Dict]):
             cat_avg = sum(r.get("total_score", 0) or 0 for r in items) / len(items)
             print(f"- **{cat}**: {len(items)} 题, 均分 {cat_avg:.2f}")
 
-    # 低分题
     low_score = [r for r in results if (r.get("total_score") or 1.0) < 0.5]
     if low_score:
         print(f"\n### ⚠ 低分题 (总分 < 0.5)")
@@ -492,10 +434,6 @@ def print_summary(results: List[Dict]):
             reason = r.get("failure_reason", "") or r.get("missing_info", "")
             print(f"- **{r['id']}**: {reason[:120]}")
 
-
-# ======================================================================
-# 6. 主流程
-# ======================================================================
 
 async def main():
     parser = argparse.ArgumentParser(description="游戏客服 Agent 批量评估")
@@ -507,7 +445,6 @@ async def main():
                         help="报告格式: csv=Excel用, md=Cursor预览, both=都生成")
     args = parser.parse_args()
 
-    # 加载用例
     cases = load_test_cases(args.category)
     if args.max_cases:
         cases = cases[:args.max_cases]
@@ -517,11 +454,9 @@ async def main():
         print("没有找到测试用例，退出")
         return
 
-    # 初始化 graph
     print("初始化 LangGraph...")
     graph = await get_graph()
 
-    # 批量运行
     results = []
     for i, case in enumerate(cases):
         cid = case["id"]
@@ -530,7 +465,6 @@ async def main():
 
         result = await run_single(graph, case)
 
-        # 运行异常处理
         if result.get("error"):
             print(f"  ❌ 错误: {result['error'][:80]}")
             results.append({
@@ -552,18 +486,15 @@ async def main():
             })
             continue
 
-        # --- 硬评分 ---
         tool_score, tool_reason = score_tool_usage(case, result)
         esc_score, esc_reason = score_escalation(case, result)
         forbid_score, forbid_reason, is_blocked = score_forbidden(case, result)
 
-        # --- 内容 LLM Judge ---
         if args.skip_llm:
             content_result = {"covered": [], "missing": ["已跳过 LLM Judge"], "score": 0.0}
         else:
             actual_reply = result.get("final_response", "")
             if not actual_reply.strip():
-                # 兜底：取最后一条 AI 消息
                 from langchain_core.messages import AIMessage
                 for msg in reversed(result.get("messages", [])):
                     if isinstance(msg, AIMessage) and msg.content:
@@ -575,8 +506,6 @@ async def main():
         covered = content_result.get("covered", [])
         missing = content_result.get("missing", [])
 
-        # --- 综合总分 ---
-        # 升等提议场景：agent 会返回 human_offer 按钮，内容评分权重下调
         is_human_offer_case = (
             case.get("must_escalate")
             and (
@@ -586,15 +515,12 @@ async def main():
         )
 
         if is_human_offer_case:
-            # 升等中断场景：内容评分无意义
-            # 权重重新分配：工具 45% + 升等 35% + 禁止 20%
             total_score = (
                 tool_score * 0.45
                 + esc_score * 0.35
                 + forbid_score * 0.20
             )
         else:
-            # 默认权重：工具 30% + 升等 15% + 禁止 25% + 内容 30%
             total_score = (
                 tool_score * 0.30
                 + esc_score * 0.15
@@ -605,7 +531,6 @@ async def main():
         if is_blocked:
             total_score = 0.0
 
-        # --- 失分原因 ---
         reasons = []
         if tool_reason:
             reasons.append(f"[工具] {tool_reason}")
@@ -643,7 +568,6 @@ async def main():
             "error": "",
         })
 
-    # 输出
     output_base = args.output.replace(".csv", "").replace(".md", "")
     fmt = args.report_format
     if fmt in ("csv", "both"):

@@ -15,7 +15,10 @@ import './App.css'
 import { API_BASE } from './config'
 
 const REVIEWER_ID = 'admin_001'
-const AUTH_HEADERS = { 'X-Reviewer-Token': 'dev' }
+// 与后端 REVIEWER_API_KEY 保持一致；可通过 VITE_REVIEWER_TOKEN 覆盖
+const AUTH_HEADERS = {
+  'X-Reviewer-Token': import.meta.env.VITE_REVIEWER_TOKEN || 'dev',
+}
 const HISTORY_POLL_INTERVAL = 3000
 const IDLE_LIMIT_SECONDS = 300  // 与后端 HUMAN_USER_IDLE_SECONDS 保持一致
 
@@ -51,7 +54,6 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [reply, setReply] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  // 用于每秒刷新计时的 tick
   const [tick, setTick] = useState(0)
   const historyEndRef = useRef(null)
   const currentTaskRef = useRef(null)
@@ -61,7 +63,6 @@ function App() {
     currentTaskRef.current = currentTask
   }, [currentTask])
 
-  // 每秒 tick，驱动计时更新
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 1000)
     return () => clearInterval(t)
@@ -85,7 +86,6 @@ function App() {
           message.info('用户长时间未回复，接待已自动结束')
           closeDrawer()
         } else {
-          // 更新 currentTask 的 last_user_at / last_agent_at
           setCurrentTask(still)
         }
       }
@@ -105,7 +105,6 @@ function App() {
       })
       if (!res.ok) throw new Error('history failed')
       const data = await res.json()
-      // 展示完整对话：user（玩家）/ agent（AI客服）/ human_agent（人工客服）
       setHistory(data.messages || [])
     } catch {
       if (!silent) {
@@ -123,7 +122,6 @@ function App() {
     return () => clearInterval(timer)
   }, [fetchPending])
 
-  // 会话抽屉打开时，轮询对话历史
   useEffect(() => {
     if (!drawerOpen || !currentTask) return undefined
     fetchHistory(currentTask.session_id, true)
@@ -133,7 +131,6 @@ function App() {
     return () => clearInterval(timer)
   }, [drawerOpen, currentTask?.session_id, fetchHistory])
 
-  // 新消息时滚动到底部
   useEffect(() => {
     historyEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [history])
@@ -213,7 +210,6 @@ function App() {
     }
   }
 
-  // 计时展示（依赖 tick 每秒刷新）
   const userIdleSecs = currentTask ? secondsAgo(currentTask.last_user_at) : null
   const agentIdleSecs = currentTask ? secondsAgo(currentTask.last_agent_at) : null
   const userIdleWarning = userIdleSecs !== null && userIdleSecs > IDLE_LIMIT_SECONDS * 0.6

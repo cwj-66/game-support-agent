@@ -1,19 +1,10 @@
 """
 MCP Server — 客服工具服务
 
-职责：注册并暴露客服工具给 MCP Client（LangGraph 侧）。
-暴露 3 个工具：check_ticket / lookup_account / query_knowledge
-注意：create_ticket 已移除，工单创建改为 propose_ticket → 前端确认 → /chat/ticket-confirm 三步流程
+暴露 check_ticket / lookup_account / query_knowledge。
+工单创建走 propose_ticket → 前端确认 → /chat/ticket-confirm 流程。
 
-业务逻辑统一在 app/core/ticket_service.py 和 app/core/account_service.py，
-此处只做 MCP 注册（@mcp.tool 装饰器）和 Docstring 声明。
-
-核心原则：Server 只管工具的注册和暴露，Client 只管工具的发现和绑定，
-interrupt 的控制权始终在 LangGraph 图里，不要把控制流逻辑放进 MCP Server。
-
-启动方式：
-    python mcp_server.py
-    # 监听 http://127.0.0.1:8001/mcp
+启动：python mcp_server.py  →  http://127.0.0.1:8001/mcp
 """
 
 import os
@@ -21,15 +12,16 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-# 确保项目根目录在 Python 路径，以便 import app.*
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-mcp = FastMCP("customer-service")
+# host 必须在构造时传入：默认 127.0.0.1 会开启 DNS rebinding 保护，
+# Docker 内以服务名访问会返回 421 Misdirected Request
+_MCP_HOST = os.getenv("MCP_HOST", "0.0.0.0")
+_MCP_PORT = int(os.getenv("MCP_PORT", "8001"))
+mcp = FastMCP("customer-service", host=_MCP_HOST, port=_MCP_PORT)
 
-
-# ─── 工具 1：查询工单 ────────────────────────────────────────────────
 
 @mcp.tool()
 def check_ticket(user_id: str, ticket_id: str = "") -> dict:
@@ -47,8 +39,6 @@ def check_ticket(user_id: str, ticket_id: str = "") -> dict:
     return check_ticket_core(user_id, ticket_id)
 
 
-# ─── 工具 2：查询账号状态 ─────────────────────────────────────────────
-
 @mcp.tool()
 def lookup_account(user_id: str, fields: str = "") -> dict:
     """查询玩家账号状态。按需传入 fields 只取需要的分类，不要获取不需要的分类。
@@ -65,8 +55,6 @@ def lookup_account(user_id: str, fields: str = "") -> dict:
     return lookup_account_core(user_id, fields)
 
 
-# ─── 工具 3：查询知识库 ───────────────────────────────────────────────
-
 @mcp.tool()
 async def query_knowledge(question: str) -> dict:
     """查询内部知识库，获取准确的游戏及客服相关信息。
@@ -74,29 +62,20 @@ async def query_knowledge(question: str) -> dict:
     覆盖范围：游戏攻略/机制/活动、账号操作（注销/换绑/实名）、封号申诉、充值退款、投诉处理等。
     绝大多数用户问题都应优先使用此工具查询，包括封号、充值、退款等敏感问题。
 
+    流程：HTTP 检索片段 → 本服务 LLM 依据片段作答 → 再由 Agent generate 节点润色最终客服话术。
+
     Args:
         question: 用户要查询的问题，例如"原神如何获得原石？"
     """
-    import httpx
+    from agent.tools.rag_client import RAGClient
 
-    rag_url = os.getenv("RAG_SERVICE_URL", "http://localhost:8000")
+    client = RAGClient()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{rag_url}/query",
-                json={"query": question, "top_k": 3},
-            )
-            resp.raise_for_status()
-            return resp.json()
-    except httpx.ConnectError:
-        return {"has_answer": False, "message": "知识服务连接失败，建议转人工", "confidence": 0.0}
-    except httpx.TimeoutException:
-        return {"has_answer": False, "message": "知识服务超时，建议稍后重试或转人工", "confidence": 0.0}
-    except Exception as e:
-        return {"has_answer": False, "message": f"知识服务发生未知错误，建议转人工", "confidence": 0.0}
+        return await client.query_knowledge(question)
+    finally:
+        await client.close()
 
 
 if __name__ == "__main__":
     import uvicorn
-    # 使用 streamable_http transport（MCP 新标准，端点 /mcp）
-    uvicorn.run(mcp.streamable_http_app(), host="127.0.0.1", port=8001)
+    uvicorn.run(mcp.streamable_http_app(), host=_MCP_HOST, port=_MCP_PORT)

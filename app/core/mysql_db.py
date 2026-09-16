@@ -1,9 +1,4 @@
-"""
-MySQL 连接工具（Mock 游戏用户 + 工单）
-
-数据文件不在项目目录里，由 Docker 卷 mysql-data 持久化。
-初始化脚本：scripts/mysql/init.sql
-"""
+"""MySQL 连接工具（Mock 游戏用户 + 工单）。"""
 
 from contextlib import contextmanager
 from typing import Iterator

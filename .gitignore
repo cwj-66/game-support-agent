@@ -1,5 +1,65 @@
+# Python
 venv/
+.venv/
 __pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Env & secrets
 .env
+.env.local
+*.pem
+*.key
+
+# IDE / editor
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# AI assistant / private notes（勿公开）
+.claude/
+CLAUDE.md
+AGENTS.md
+项目面试题.md
+*.local.md
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+player-chat/node_modules/
+player-chat/dist/
+admin-ui/node_modules/
+admin-ui/dist/
+
+# Runtime data & logs
+logs/
+*.log
+data/*.db
+data/*.db-*
 *.db-shm
 *.db-wal
+
+# Eval generated reports
+eval/report_*
+.eval/
+
+# OS / misc
+*.tmp
+*.bak
+.cache/

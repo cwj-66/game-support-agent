@@ -6,6 +6,7 @@
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import jwt
@@ -24,6 +25,35 @@ class CurrentPlayer:
     user_id: str
     server_id: Optional[str] = None
     nickname: Optional[str] = None
+
+
+def issue_game_token(
+    user_id: str,
+    settings: Settings,
+    *,
+    server_id: Optional[str] = None,
+    nickname: Optional[str] = None,
+    hours: int = 24,
+) -> str:
+    """签发游戏 JWT（演示登录 / 本地脚本共用）。"""
+    if not settings.GAME_JWT_SECRET:
+        raise HTTPException(status_code=500, detail="服务端未配置 GAME_JWT_SECRET")
+
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "iat": now,
+        "exp": now + timedelta(hours=hours),
+    }
+    if server_id:
+        payload["server_id"] = server_id
+    if nickname:
+        payload["nickname"] = nickname
+    return jwt.encode(
+        payload,
+        settings.GAME_JWT_SECRET,
+        algorithm=settings.GAME_JWT_ALGORITHM,
+    )
 
 
 def decode_game_token(token: str, settings: Settings) -> dict:
@@ -51,25 +81,25 @@ async def get_current_player(
     """
     校验游戏服签发的 JWT，提取真实玩家 UID。
 
-    开发模式：DEBUG=true 且未配置 GAME_JWT_SECRET 时，返回 mock 玩家 10001。
+    带 Bearer token 时始终按 JWT 识别玩家（演示选号登录依赖此逻辑）。
+    开发模式：DEBUG=true 且未配置 GAME_JWT_SECRET、且未带 token 时，返回 mock 玩家 10001。
     """
+    has_bearer = bool(credentials and credentials.scheme.lower() == "bearer")
+    if has_bearer:
+        payload = decode_game_token(credentials.credentials, settings)
+        user_id = payload.get("sub") or payload.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="token 中缺少用户标识 (sub)")
+        return CurrentPlayer(
+            user_id=str(user_id),
+            server_id=payload.get("server_id"),
+            nickname=payload.get("nickname"),
+        )
+
     if settings.game_auth_disabled:
         return CurrentPlayer(user_id="10001", server_id="s1", nickname="开发测试号")
 
-    if not credentials or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="缺少 Authorization: Bearer token")
-
-    payload = decode_game_token(credentials.credentials, settings)
-
-    user_id = payload.get("sub") or payload.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="token 中缺少用户标识 (sub)")
-
-    return CurrentPlayer(
-        user_id=str(user_id),
-        server_id=payload.get("server_id"),
-        nickname=payload.get("nickname"),
-    )
+    raise HTTPException(status_code=401, detail="缺少 Authorization: Bearer token")
 
 
 def require_session_owner(session_id: str, player: CurrentPlayer) -> None:

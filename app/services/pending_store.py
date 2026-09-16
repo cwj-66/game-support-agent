@@ -1,12 +1,4 @@
-"""
-待审核队列存储
-
-支持两级存储：
-1. Redis（生产）— 持久化、多进程共享、重启不丢失
-2. 内存 dict（降级）— Redis 不可用时自动回退，重启丢失
-
-所有函数都是 async，调用方需 await。
-"""
+"""待审核队列：Redis 持久化，不可用时降级内存。"""
 
 import json
 import logging
@@ -15,10 +7,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ---- 内存降级存储 ----
 _memory: dict[str, dict] = {}
 
-# ---- Redis 客户端（懒初始化） ----
 _redis_client = None
 _redis_available = False
 _connection_checked = False
@@ -57,9 +47,8 @@ async def _get_redis():
     return _redis_client if _redis_available else None
 
 
-# ---- Redis Key 前缀 ----
 _PREFIX = "pending:"
-_TTL_SECONDS = 86400  # 24 小时自动过期
+_TTL_SECONDS = 86400
 
 
 async def add_pending(session_id: str, payload: dict) -> None:

@@ -1,11 +1,4 @@
-"""
-MCP Client 封装
-
-连接本项目的 MCP Server（mcp_server.py，streamable_http transport），
-发现并缓存工具，转成 LangChain BaseTool 供 Agent 使用。
-
-连接失败时由应用启动阶段直接报错，不提供本地工具兜底。
-"""
+"""MCP 客户端：连接 MCP Server 并缓存工具。"""
 
 import os
 from typing import Optional
@@ -29,9 +22,9 @@ async def init_mcp_client(url: str = "http://localhost:8001/mcp") -> list:
     """
     global _exit_stack, _mcp_client, _mcp_tools
 
-    # 让本地地址绕过系统代理（避免 VPN/代理拦截 localhost 导致连接失败）
+    # 让本地/Docker 内地址绕过系统代理
     _no_proxy = os.environ.get("NO_PROXY", "")
-    for host in ("localhost", "127.0.0.1"):
+    for host in ("localhost", "127.0.0.1", "mcp-server"):
         if host not in _no_proxy:
             _no_proxy = f"{_no_proxy},{host}" if _no_proxy else host
     os.environ["NO_PROXY"] = _no_proxy

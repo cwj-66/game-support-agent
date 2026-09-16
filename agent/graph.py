@@ -1,7 +1,4 @@
-"""
-LangGraph 主图定义
-Agent 编排核心文件：路由函数 + 图结构 + 执行入口
-"""
+"""LangGraph 主图：路由、编译与执行入口。"""
 
 from typing import Literal, Dict, Any, Optional, AsyncGenerator
 
@@ -17,8 +14,6 @@ from .nodes import (
 from .checkpointer import get_checkpointer
 
 
-# ============ 路由函数 ============
-
 async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "generate"]:
     """reasoning 节点路由：有 tool_calls → tool_exec，否则 → generate"""
     from langchain_core.messages import AIMessage
@@ -31,8 +26,6 @@ async def route_from_reasoning(state: AgentState) -> Literal["tool_exec", "gener
             break
     return "generate"
 
-
-# ============ 图构建（懒加载） ============
 
 workflow = StateGraph(AgentState)
 
@@ -64,8 +57,6 @@ async def get_graph():
         _compiled_graph = workflow.compile(checkpointer=cp)
     return _compiled_graph
 
-
-# ============ 执行入口 ============
 
 async def run_agent(
     session_id: str,

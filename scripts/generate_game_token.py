@@ -12,7 +12,6 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-# 把项目根目录加入 path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import jwt

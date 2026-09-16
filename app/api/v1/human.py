@@ -1,8 +1,4 @@
-"""
-人工接待操作 API
-支持客服多轮与玩家对话，以及结束接待（action=close）。
-消息直接写入 checkpoint，不经过 LangGraph interrupt。
-"""
+"""人工接待 API。"""
 
 import asyncio
 from datetime import datetime, timezone
@@ -56,7 +52,6 @@ async def list_pending_sessions(
         except (ValueError, TypeError):
             elapsed = 0
 
-        # 检查用户空闲超时
         last_user_at_str = payload.get("last_user_at")
         if last_user_at_str:
             try:
@@ -80,7 +75,6 @@ async def list_pending_sessions(
             last_agent_at=payload.get("last_agent_at"),
         ))
 
-    # 异步清理超时会话（不阻塞响应）
     if expired_sessions:
         asyncio.create_task(_auto_close_idle_sessions(expired_sessions))
 
@@ -127,7 +121,6 @@ async def send_agent_message(
     reply_text = (body.reply or "").strip()
 
     if action == "close":
-        # 结束接待：有回复就写入，没有就只发结束通知
         if reply_text:
             await append_agent_message(session_id, reply_text)
         await append_agent_message(session_id, "本次接待已结束，感谢您的耐心等候。")

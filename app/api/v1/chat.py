@@ -1,7 +1,4 @@
-"""
-对话API
-处理用户对话请求，调用Agent执行
-"""
+"""对话 API：发送消息、历史、SSE 流式。"""
 
 import time
 import json
@@ -90,11 +87,9 @@ async def send_message(
     user_id = player.user_id
     start_time = time.perf_counter()
 
-    # 人工接待中：pending 或 human_mode 存在即走人工通道
     if await get_pending(request.session_id) or await is_human_mode(request.session_id):
         try:
             await append_user_message(request.session_id, request.message)
-            # 更新用户最后发言时间
             pending = await get_pending(request.session_id)
             if pending:
                 pending["last_user_at"] = datetime.now(timezone.utc).isoformat()
@@ -248,7 +243,6 @@ async def get_human_reply(
                 reply = msg.content if isinstance(msg.content, str) else str(msg.content)
                 human_active = await get_pending(session_id) is not None
 
-                # 超时检测：1分钟提醒，5分钟自动结束
                 if human_active:
                     ts_str = kwargs.get("timestamp")
                     if ts_str:

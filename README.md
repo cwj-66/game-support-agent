@@ -9,7 +9,7 @@ game-support-agent/
 ├── agent/                          # LangGraph 核心编排
 │   ├── graph.py                    # 主图：4 个节点 + 1 条条件边（ReAct 循环）
 │   ├── state.py                    # AgentState 定义（TypedDict）
-│   ├── checkpointer.py             # AsyncRedisSaver 状态持久化
+│   ├── checkpointer.py             # AsyncSqliteSaver 状态持久化
 │   ├── nodes/
 │   │   ├── reasoning.py            # LLM 推理节点（bind_tools 自主决策）
 │   │   ├── tool_exec.py            # 通用工具分发器
@@ -18,56 +18,39 @@ game-support-agent/
 │   ├── tools/
 │   │   ├── __init__.py             # get_all_tools()：MCP 工具 + 本地提议工具
 │   │   ├── mcp_client.py           # MCP Client（连接 mcp_server.py）
-│   │   ├── rag_client.py           # RAG HTTP 客户端
+│   │   ├── rag_client.py           # RAG HTTP 客户端（仅检索）
+│   │   ├── knowledge_answer.py     # 基于检索片段生成本侧答案
 │   │   ├── propose_ticket.py       # 提议创建工单（前端确认后落库）
 │   │   └── propose_human_escalation.py  # 提议转人工（前端确认后进入接待）
 │   └── prompts/
 │       └── system.py               # 系统提示词
 ├── app/                            # FastAPI 服务层
-│   ├── main.py                     # 入口（CORS、路由、生命周期、MCP/Redis/MySQL 初始化）
+│   ├── main.py                     # 入口（CORS、路由、生命周期）
 │   ├── api/
-│   │   ├── deps.py                 # JWT 鉴权、会话归属校验
+│   │   ├── deps.py                 # JWT / Reviewer Token 鉴权
 │   │   └── v1/
 │   │       ├── chat.py             # 对话 / 流式 / 工单&人工确认
 │   │       ├── human.py            # 人工接待接口
 │   │       └── ticket.py           # 工单 CRUD
-│   ├── core/
-│   │   ├── config.py               # pydantic-settings 配置
-│   │   ├── llm.py                  # LLM 工厂（DashScope 优先，OpenAI 兜底）
-│   │   ├── mysql_db.py             # MySQL 连接池
-│   │   ├── checkpoint_helper.py    # checkpoint 读写辅助
-│   │   └── exceptions.py           # 业务异常 + 全局处理器
-│   ├── repositories/
-│   │   └── database.py             # MySQL 工单/账号 CRUD
-│   ├── services/
-│   │   ├── ticket_service.py       # 工单业务逻辑（MCP 与 API 共用）
-│   │   ├── account_service.py      # 账号查询业务逻辑
-│   │   ├── pending_store.py        # 待接待队列（Redis，降级内存）
-│   │   ├── human_chat.py           # 人工接待消息写入 checkpoint
-│   │   ├── session_store.py        # 会话 TTL 管理
-│   │   ├── session_summary.py      # 多轮对话摘要
-│   │   └── long_term_memory.py     # 长期记忆
+│   ├── core/                       # 配置、LLM、MySQL、异常
+│   ├── repositories/               # MySQL CRUD
+│   ├── services/                   # 工单、账号、接待队列、会话摘要等
 │   └── models/
-│       ├── chat.py
-│       ├── human_session.py
-│       └── ticket.py
 ├── eval/                           # 评测框架（27 题，四类别）
-├── player-chat/                    # 玩家端（React + Vite + Ant Design）
-├── admin-ui/                       # 客服端（React + Vite + Ant Design）
-├── client/                         # 终端 CLI（rich）
-│   ├── cli.py
-│   ├── web_ui.py                   # 旧版 Streamlit（可选）
-│   └── user_ui.py
+├── player-chat/                    # 统一前端：玩家端 + 客服工作台 /admin
+├── admin-ui/                       # 已并入 player-chat，勿单独启动
+├── client/
+│   └── cli.py                      # 终端 CLI（rich）
+├── mock_rag/                       # 本地演示用 RAG 桩服务（可选）
 ├── scripts/
 │   ├── generate_game_token.py      # 本地测试 JWT 生成
-│   ├── view_mysql_data.py          # 查看 MySQL 数据
-│   └── mysql/init.sql              # Docker MySQL 初始化脚本
+│   └── mysql/                      # Docker MySQL：客服库 + 共享的 rag_database
 ├── tests/
-├── data/                           # 运行时数据目录
-├── mcp_server.py                   # MCP Server（3 个工具：query_knowledge / lookup_account / check_ticket）
+├── data/                           # 运行时数据目录（*.db 不入库）
+├── mcp_server.py                   # MCP Server（query_knowledge / lookup_account / check_ticket）
 ├── .env.example
 ├── requirements.txt
-└── docker-compose.yml              # mysql + redis + rag + agent-api + web-ui
+└── docker-compose.yml              # mysql + redis + qdrant + rag-api + mcp + agent-api + player-chat
 ```
 
 ### LangGraph 流程（简图）
@@ -78,7 +61,7 @@ START → reasoning ─┬─ 有 tool_calls → tool_exec → reasoning（ReAct
 ```
 
 - **工单创建**：Agent 调用 `propose_ticket` → 前端弹窗确认 → `POST /chat/ticket-confirm` 落库
-- **转人工**：Agent 调用 `propose_human_escalation` → 前端确认 → `POST /chat/human-confirm` → 客服在 admin-ui 接待
+- **转人工**：Agent 调用 `propose_human_escalation` → 前端确认 → `POST /chat/human-confirm` → 客服在 `/admin` 接待
 
 ## 快速开始
 
@@ -102,7 +85,7 @@ cp .env.example .env
 ### 2. 启动基础依赖
 
 ```bash
-# MySQL（工单/账号）+ Redis（Agent 状态 + 待接待队列）
+# MySQL（工单/账号）+ Redis（待接待队列）
 docker compose up -d mysql redis
 ```
 
@@ -121,14 +104,15 @@ python -m app.main
 ### 4. 启动前端
 
 ```bash
-# 玩家端
 cd player-chat && npm install && npm run dev   # http://localhost:5173
-
-# 客服端
-cd admin-ui && npm install && npm run dev      # http://localhost:5174
 ```
 
-两个前端通过 Vite proxy 转发到 `http://localhost:8002`。
+| 路径 | 说明 |
+|------|------|
+| http://localhost:5173 | 玩家端 |
+| http://localhost:5173/admin | 客服工作台 |
+
+前端通过 Vite proxy 转发到 `http://localhost:8002`。
 
 ### 5. 运行评测 / 测试
 
@@ -138,20 +122,19 @@ python eval/evaluate.py --category tool
 python eval/evaluate.py --skip-llm
 
 pytest
-pytest tests/test_safety.py -v
+pytest tests/test_rag_client.py -v
 ```
 
-## 启动流程速查
+## 启动流程速查（本地开发）
 
 | 组件 | 命令 | 端口 |
 |------|------|------|
-| MySQL | `docker compose up -d mysql` | 3307（映射） |
-| Redis | `docker compose up -d redis` | 6379 |
-| RAG 服务（可选） | `docker compose up -d rag-service` | 8000 |
+| 全栈（含真实 RAG） | `docker compose up -d --build` | 5175 / 8000 / 8002 |
+| MySQL / Redis / Qdrant | 已包含在全栈中；也可 `up -d mysql redis qdrant` | 3307 / 6380 / 6333（仅 127.0.0.1） |
+| RAG 桩（不跑 Docker RAG） | `python -m uvicorn mock_rag.main:app --port 8000` | 8000 |
 | MCP Server | `python mcp_server.py` | 8001 |
 | FastAPI 后端 | `python -m app.main` | 8002 |
-| 玩家端 | `cd player-chat && npm run dev` | 5173 |
-| 客服端 | `cd admin-ui && npm run dev` | 5174 |
+| 前端 | `cd player-chat && npm run dev` | 5173（`/admin` 为客服工作台） |
 | 终端 CLI | `python client/cli.py --session test_001 "问题"` | — |
 
 ## API 接口
@@ -212,12 +195,117 @@ GET   /api/v1/human/history/{session_id}
 
 ## Docker 一键部署
 
-```bash
-# 需先在 .env 配置 DASHSCOPE_API_KEY 等
-docker compose up -d
+一条 compose 拉起客服 + 知识库：**一份 MySQL（两个库）+ Redis + Qdrant**。  
+两个 Git 仓库需同级目录：
+
+```
+PythonProject/game-support-agent   ← 在此执行 compose
+PythonProject/enterprise-rag
 ```
 
-服务：mysql、redis、rag-service、agent-api（8002）、web-ui（8501，旧版 Streamlit）。
+内存建议 **≥ 4GB**。不要同时 `up` `enterprise-rag/docker-compose.yml`。
+
+### 1. 准备环境变量
+
+```bash
+cp .env.example .env
+# 至少填写：DASHSCOPE_API_KEY、GAME_JWT_SECRET、REVIEWER_API_KEY
+# RAG_API_KEY 与知识库 API_KEY 一致，默认 dev-rag-key
+```
+
+RAG 不在 `../enterprise-rag` 时，在 `.env` 设置 `ENTERPRISE_RAG_DIR`（正斜杠路径）。
+
+### 2. 启动全部服务
+
+```bash
+docker compose up -d --build
+```
+
+查看状态：
+
+```bash
+docker compose ps
+```
+
+停止：
+
+```bash
+docker compose down
+```
+
+### 3. 访问地址
+
+| 入口 | 地址 | 说明 |
+|------|------|------|
+| 前端 | http://localhost:5175 | 玩家聊天；`/admin` 为客服工作台 |
+| Agent API | http://localhost:8002/docs | FastAPI Swagger |
+| RAG UI | http://localhost:8000/ui | 上传/检索知识库（`X-API-Key` = `RAG_API_KEY`） |
+| MySQL | `127.0.0.1:3307` | 仅本机；库 `game_support` + `rag_database` |
+| Redis | `127.0.0.1:6380` | 仅本机；待接待队列 |
+| Qdrant | `127.0.0.1:6333` | 仅本机；向量 |
+
+VPS 把前端放到 80 端口：`.env` 设 `FRONTEND_PORT=80`。
+
+本地生成玩家 JWT：
+
+```bash
+python scripts/generate_game_token.py --user-id 10001
+```
+
+### 4. 常用命令
+
+```bash
+# 只重启后端
+docker compose up -d --build agent-api mcp-server
+
+# 查看后端 / RAG 日志
+docker compose logs -f agent-api rag-api
+
+# 若 player-chat 未起来
+docker compose up -d player-chat
+```
+
+## RAG 知识库
+
+`docker compose up` 会构建并启动同级仓库 `enterprise-rag` 的 `rag-api`。Agent 通过 MCP 工具 `query_knowledge`：
+
+1. HTTP 调用知识库 **`POST /api/v1/retrieve`** 只取片段  
+2. 在本仓库用 LLM（`agent/tools/knowledge_answer.py`）依据片段作答  
+3. 再经图中 `generate` 节点润色成客服话术
+
+不跑 Docker、只测 Agent 时可用内置桩：
+
+```bash
+python -m uvicorn mock_rag.main:app --port 8000
+```
+
+### 外部 RAG HTTP 契约
+
+自有知识库需实现**仅检索**接口（不要依赖 RAG 侧生成答案）：
+
+```http
+GET /health
+→ 200 {"status": "ok"}
+
+POST /api/v1/retrieve
+Content-Type: application/json
+X-API-Key: <optional>
+
+{"question": "如何获得原石？", "top_k": 10}
+
+→ 200
+{
+  "query": "如何获得原石？",
+  "sources": [
+    {"text": "片段全文", "source": "faq.md", "page": null, "score": 0.92}
+  ],
+  "max_score": 0.92,
+  "retrieve_mode": "vector",
+  "elapsed_ms": 120
+}
+```
+
+客户端见 `agent/tools/rag_client.py`；不可用时会安全降级（建议转人工），不阻断主服务启动。
 
 ## 技术栈
 
@@ -228,7 +316,7 @@ docker compose up -d
 | 评测 | LLM-as-Judge via qwen-max |
 | API 服务 | FastAPI + Pydantic |
 | 客户端 | React + Vite + Ant Design + rich CLI |
-| 持久化 | Redis（Agent 状态 + 待接待队列）+ MySQL（工单/账号） |
-| 外部集成 | MCP Server（streamable_http）+ RAG HTTP |
+| 持久化 | SQLite（Agent 状态）+ Redis（待接待队列）+ MySQL（工单/账号 + 知识库元数据）+ Qdrant（向量） |
+| 外部集成 | MCP Server（streamable_http）+ enterprise-rag HTTP（/api/v1/retrieve） |
 | 鉴权 | 游戏 JWT（玩家）+ Reviewer Token（客服） |
 | 测试 | pytest |

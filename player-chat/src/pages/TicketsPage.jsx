@@ -10,50 +10,19 @@ import {
   message,
   Typography,
 } from 'antd'
-import { API_BASE } from '../config'
+import { apiFetch } from '../api'
+import { useAuth } from '../auth'
+import {
+  STATUS_OPTIONS,
+  STATUS_MAP,
+  PRIORITY_MAP,
+  CATEGORY_MAP,
+  formatTime,
+} from '../ticketMeta'
 import './TicketsPage.css'
 
-const STATUS_OPTIONS = [
-  { value: '', label: '全部状态' },
-  { value: 'pending', label: '待处理' },
-  { value: 'processing', label: '处理中' },
-  { value: 'resolved', label: '已解决' },
-  { value: 'escalated', label: '已升级' },
-]
-
-const STATUS_MAP = {
-  pending: { text: '待处理', color: 'gold' },
-  processing: { text: '处理中', color: 'blue' },
-  resolved: { text: '已解决', color: 'green' },
-  escalated: { text: '已升级', color: 'red' },
-}
-
-const PRIORITY_MAP = {
-  P0: { text: 'P0 紧急', color: 'red' },
-  P1: { text: 'P1 高', color: 'orange' },
-  P2: { text: 'P2 普通', color: 'default' },
-}
-
-const CATEGORY_MAP = {
-  gameplay: '玩法咨询',
-  account: '账号问题',
-  payment: '充值支付',
-  bug: 'Bug 反馈',
-  complaint: '投诉建议',
-  other: '其他',
-}
-
-/** 格式化 ISO 时间为本地可读字符串 */
-const formatTime = (isoStr) => {
-  if (!isoStr) return '—'
-  try {
-    return new Date(isoStr).toLocaleString('zh-CN', { hour12: false })
-  } catch {
-    return isoStr
-  }
-}
-
 function TicketsPage() {
+  const { player, logout } = useAuth()
   const [tickets, setTickets] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -74,9 +43,14 @@ function TicketsPage() {
       })
       if (statusFilter) params.set('status', statusFilter)
 
-      const res = await fetch(`${API_BASE}/ticket/list?${params}`)
+      const res = await apiFetch(`/ticket/list?${params}`)
       if (!res.ok) {
-        message.error(res.status === 401 ? '请先登录' : '获取工单列表失败')
+        if (res.status === 401) {
+          logout()
+          message.error('登录已过期，请重新选择测试账号')
+        } else {
+          message.error('获取工单列表失败')
+        }
         return
       }
       const data = await res.json()
@@ -87,7 +61,7 @@ function TicketsPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, statusFilter])
+  }, [page, pageSize, statusFilter, logout])
 
   useEffect(() => {
     fetchTickets()
@@ -98,7 +72,7 @@ function TicketsPage() {
     setDetailLoading(true)
     setCurrentTicket(null)
     try {
-      const res = await fetch(`${API_BASE}/ticket/${ticketId}`)
+      const res = await apiFetch(`/ticket/${ticketId}`)
       if (!res.ok) {
         message.error('获取工单详情失败')
         setDrawerOpen(false)
@@ -175,9 +149,14 @@ function TicketsPage() {
   return (
     <div className="tickets-page">
       <div className="tickets-toolbar">
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          历史工单
-        </Typography.Title>
+        <div>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            我的工单
+          </Typography.Title>
+          <Typography.Text type="secondary">
+            {player?.nickname} · UID {player?.uid}，仅显示当前账号
+          </Typography.Text>
+        </div>
         <Select
           value={statusFilter}
           options={STATUS_OPTIONS}
@@ -191,7 +170,10 @@ function TicketsPage() {
 
       <Spin spinning={loading}>
         {tickets.length === 0 && !loading ? (
-          <Empty description="暂无工单记录" className="tickets-empty" />
+          <Empty
+            description="当前账号暂无工单。可在聊天中让客服帮你创建。"
+            className="tickets-empty"
+          />
         ) : (
           <Table
             rowKey="ticket_id"

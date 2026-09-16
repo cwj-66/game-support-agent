@@ -1,18 +1,17 @@
 import { useState, useRef, useEffect } from 'react'
-import { Input, Button, Card, Spin, Tag } from 'antd'
+import { Input, Button, Card, Drawer, Spin, Tag } from 'antd'
 import { API_BASE } from '../config'
+import { apiFetch } from '../api'
+import { useAuth } from '../auth'
+import { PlayerProfileDesc, scenarioOf } from '../PlayerProfile'
 import './ChatPage.css'
 
 const POLL_INTERVAL = 3000
 const SEND_TIMEOUT = 90 * 1000
-const DEV_USER_ID = '10001'
-
-/** 每次刷新页面生成新会话 ID，格式须为 {user_id}_{随机串} */
-const createSessionId = () => `${DEV_USER_ID}_${Date.now()}`
 
 /** 根据 HTTP 状态码返回可读错误信息 */
 const getHttpErrorMessage = (status) => {
-  if (status === 401) return '鉴权失败，请确认后端已开启 DEBUG=true 开发模式'
+  if (status === 401) return '登录已过期，请到「测试账号」页重新选择账号'
   if (status === 403) return '无权访问该会话，请刷新页面重试'
   if (status >= 500) return '服务端错误，请稍后重试'
   return '请求失败，请检查后端是否启动'
@@ -41,7 +40,8 @@ const INITIAL_MESSAGES = [
 ]
 
 function ChatPage() {
-  const [sessionId] = useState(createSessionId)
+  const { player, logout } = useAuth()
+  const [sessionId] = useState(() => `${player.uid}_${Date.now()}`)
   const [messages, setMessages] = useState(INITIAL_MESSAGES)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -50,6 +50,9 @@ function ChatPage() {
   const [humanOffer, setHumanOffer] = useState(null)
   const [ticketConfirming, setTicketConfirming] = useState(false)
   const [humanConfirming, setHumanConfirming] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [profile, setProfile] = useState(player)
+  const [profileLoading, setProfileLoading] = useState(false)
 
   // 已消费的历史消息总数，用于增量拉取（包含 user + assistant 全量）
   const seenHistoryCountRef = useRef(0)
@@ -60,7 +63,7 @@ function ChatPage() {
   /** 进入人工模式前，先拉一次当前历史作为基线，再设 humanMode */
   const enterHumanMode = async () => {
     try {
-      const res = await fetch(`${API_BASE}/chat/history/${sessionId}`)
+      const res = await apiFetch(`/chat/history/${sessionId}`)
       if (res.ok) {
         const data = await res.json()
         seenHistoryCountRef.current = data.total || 0
@@ -70,10 +73,6 @@ function ChatPage() {
     }
     setHumanMode(true)
   }
-
-  useEffect(() => () => {
-    // 组件卸载时无需特殊清理，interval 在下方 useEffect 里管理
-  }, [])
 
   /**
    * 人工模式轮询历史（增量）
@@ -85,18 +84,15 @@ function ChatPage() {
 
     const poll = async () => {
       try {
-        // 1. 拉全量历史
-        const res = await fetch(`${API_BASE}/chat/history/${sessionId}`)
+        const res = await apiFetch(`/chat/history/${sessionId}`)
         if (!res.ok) return
         const data = await res.json()
         const allMsgs = data.messages || []
 
-        // 2. 取出新增的人工客服消息
         const newHumanMsgs = allMsgs
           .slice(seenHistoryCountRef.current)
           .filter((m) => m.role === 'assistant' && m.is_human)
 
-        // 3. 推进基线（不管有没有 human 消息都要推，避免计入 user 消息）
         seenHistoryCountRef.current = allMsgs.length
 
         if (newHumanMsgs.length > 0) {
@@ -107,7 +103,6 @@ function ChatPage() {
                 ? updated.findIndex((msg) => msg.id === loadingMsgIdRef.current)
                 : -1
               if (loadingIdx !== -1) {
-                // 替换第一个 loading 气泡
                 updated[loadingIdx] = {
                   ...updated[loadingIdx],
                   content: m.content,
@@ -128,13 +123,11 @@ function ChatPage() {
           })
         }
 
-        // 4. 检查人工接待是否已结束
-        const replyRes = await fetch(`${API_BASE}/chat/reply/${sessionId}`)
+        const replyRes = await apiFetch(`/chat/reply/${sessionId}`)
         if (replyRes.ok) {
           const replyData = await replyRes.json()
           if (replyData.human_active === false) {
             setHumanMode(false)
-            // 清理残留 loading 气泡
             if (loadingMsgIdRef.current) {
               setMessages((prev) =>
                 prev.filter((m) => !(m.id === loadingMsgIdRef.current && m.loading)),
@@ -156,6 +149,31 @@ function ChatPage() {
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    if (!profileOpen || !player?.uid) return undefined
+    let cancelled = false
+    const load = async () => {
+      setProfileLoading(true)
+      try {
+        const res = await fetch(`${API_BASE}/demo/players`)
+        if (!res.ok) return
+        const data = await res.json()
+        const fresh = Array.isArray(data)
+          ? data.find((p) => p.uid === player.uid)
+          : null
+        if (!cancelled && fresh) setProfile(fresh)
+      } catch {
+        // 接口失败时沿用登录时缓存的档案
+      } finally {
+        if (!cancelled) setProfileLoading(false)
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [profileOpen, player?.uid])
 
   const updateAgentMsg = (thinkingId, content, loading, isHuman = false) => {
     setMessages((prev) =>
@@ -190,7 +208,7 @@ function ChatPage() {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), SEND_TIMEOUT)
 
-      const res = await fetch(`${API_BASE}/chat/send`, {
+      const res = await apiFetch('/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -202,6 +220,7 @@ function ChatPage() {
       clearTimeout(timeoutId)
 
       if (!res.ok) {
+        if (res.status === 401) logout()
         updateAgentMsg(thinkingId, getHttpErrorMessage(res.status), false)
         return
       }
@@ -209,7 +228,6 @@ function ChatPage() {
       const data = await res.json()
 
       if (data.status === 'human_chat' || humanMode) {
-        // 记录 loading 气泡 ID，等轮询拿到回复后替换
         loadingMsgIdRef.current = thinkingId
         updateAgentMsg(thinkingId, '消息已发送，等待客服回复...', true, true)
         if (!humanMode) {
@@ -245,7 +263,7 @@ function ChatPage() {
   const handleTicketConfirm = async (confirmed) => {
     setTicketConfirming(true)
     try {
-      const res = await fetch(`${API_BASE}/chat/ticket-confirm`, {
+      const res = await apiFetch('/chat/ticket-confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, confirmed }),
@@ -255,9 +273,7 @@ function ChatPage() {
         try {
           const err = await res.json()
           detail = err.detail || err.message || detail
-        } catch {
-          // 忽略解析错误
-        }
+        } catch {}
         setTicketOffer(null)
         setMessages((prev) => [
           ...prev,
@@ -292,7 +308,7 @@ function ChatPage() {
   const handleHumanConfirm = async (confirmed) => {
     setHumanConfirming(true)
     try {
-      const res = await fetch(`${API_BASE}/chat/human-confirm`, {
+      const res = await apiFetch('/chat/human-confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, confirmed }),
@@ -302,9 +318,7 @@ function ChatPage() {
         try {
           const err = await res.json()
           detail = err.detail || err.message || detail
-        } catch {
-          // 忽略解析错误
-        }
+        } catch {}
         setHumanOffer(null)
         setMessages((prev) => [
           ...prev,
@@ -365,12 +379,22 @@ function ChatPage() {
         title={
           <span>
             游戏客服助手
+            {player?.nickname && (
+              <span className="chat-player-label">
+                {player.nickname} · {player.uid}
+              </span>
+            )}
             {humanMode && (
               <Tag color="orange" className="chat-status-tag">
                 人工客服接待中
               </Tag>
             )}
           </span>
+        }
+        extra={
+          <Button size="small" onClick={() => setProfileOpen(true)}>
+            查看账号
+          </Button>
         }
       >
         <div className="message-list">
@@ -483,6 +507,20 @@ function ChatPage() {
           </Button>
         </div>
       </Card>
+      <Drawer
+        title="当前账号"
+        placement="right"
+        width={360}
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+      >
+        <Spin spinning={profileLoading}>
+          <PlayerProfileDesc player={profile || player} />
+          {(profile || player) && (
+            <p className="chat-profile-hint">{scenarioOf(profile || player)}</p>
+          )}
+        </Spin>
+      </Drawer>
     </div>
   )
 }

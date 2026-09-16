@@ -1,17 +1,7 @@
-"""
-工单业务逻辑服务层
-
-将 issue_type 映射、优先级映射、数据库调用等核心逻辑集中在此处，
-避免在 mcp_server.py 中重复编写。
-
-两处都调用这里的函数：
-    from app.services.ticket_service import create_ticket_core, check_ticket_core
-"""
+"""工单业务逻辑：issue_type 映射与数据库调用。"""
 
 import time
 import random
-
-# ── 枚举映射（只维护这一份） ────────────────────────────────────────
 
 TITLE_MAP = {
     "account_ban": "账号封禁申诉",
@@ -36,10 +26,7 @@ ESTIMATED_MAP = {
 
 
 def create_ticket_core(user_id: str, issue_type: str, description: str) -> dict:
-    """创建工单核心逻辑：映射字段 → 写库 → 返回结果 dict。
-
-    失败时自动生成降级 ticket_id，不抛异常。
-    """
+    """创建工单：映射字段 → 写库 → 返回结果 dict。失败时生成降级 ticket_id。"""
     title = TITLE_MAP.get(issue_type, "客服工单")
     priority = PRIORITY_MAP.get(issue_type, "P2")
     estimated = ESTIMATED_MAP.get(issue_type, "3-5 个工作日")
@@ -70,10 +57,7 @@ def create_ticket_core(user_id: str, issue_type: str, description: str) -> dict:
 
 
 def check_ticket_core(user_id: str, ticket_id: str = "") -> dict:
-    """查询工单核心逻辑：按工单号精确查，或按 user_id 查最近 5 条。
-
-    失败时返回包含 error 的 dict，不抛异常。
-    """
+    """查询工单：按 ticket_id 精确查，或按 user_id 查最近 5 条。"""
     try:
         from app.repositories.database import get_ticket, list_tickets
 
@@ -99,7 +83,6 @@ def check_ticket_core(user_id: str, ticket_id: str = "") -> dict:
                 "human_reviewed": ticket.human_reviewed,
             }
 
-        # 没有工单号 → 查该玩家最近工单
         tickets, total = list_tickets(player_uid=user_id, page_size=5)
         items = [
             {

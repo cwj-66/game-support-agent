@@ -1,13 +1,5 @@
 """
-客服会话 TTL 管理
-
-用 Redis key 记录会话最后活跃时间，2 小时无活动视为过期。
-过期后清除 LangGraph checkpoint，下次消息等同新会话。
-
-Agent 记忆策略：
-- 只保留当前会话内的 messages（原文）
-- 不跨会话保留 metadata / 用户画像
-- UI 对话框由前端自己展示，与此模块无关
+会话 TTL 管理：2 小时无活动过期，过期后清除 checkpoint。
 """
 
 import logging
@@ -16,7 +8,7 @@ import time
 logger = logging.getLogger(__name__)
 
 _PREFIX = "session:active:"
-_memory: dict[str, float] = {}  # session_id -> expire_timestamp（Redis 不可用时的降级）
+_memory: dict[str, float] = {}
 
 _redis_client = None
 _redis_available = False
@@ -101,7 +93,6 @@ async def expire_session_if_needed(session_id: str) -> bool:
         await touch_session(session_id)
         return True
 
-    # 仅当存在历史 checkpoint 时才归档+清除（全新 session_id 首次来访直接跳过）
     try:
         from app.core.checkpoint_helper import checkpoint_exists
 

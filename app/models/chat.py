@@ -20,14 +20,7 @@ class HumanOffer(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """
-    对话请求模型
-
-    Attributes:
-        session_id: 会话唯一标识
-        message: 用户消息内容
-        context: 可选的上下文信息
-    """
+    """对话请求"""
     session_id: str = Field(
         ...,
         description="会话ID，用于关联同一用户的多次对话",
@@ -36,7 +29,7 @@ class ChatRequest(BaseModel):
     )
     user_id: Optional[str] = Field(
         default=None,
-        description="（已废弃）玩家 UID 由 JWT 鉴权提供，无需传入",
+        description="兼容旧客户端；实际 UID 由 JWT 鉴权提供",
         max_length=64,
     )
     message: str = Field(
@@ -52,16 +45,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """
-    对话响应模型
-
-    Attributes:
-        session_id: 会话ID
-        status: 响应状态 ok / human_chat
-        response: Agent 或系统提示内容
-        sources: 知识来源（如果有使用知识库）
-        metadata: 额外元数据
-    """
+    """对话响应"""
     session_id: str = Field(..., description="会话ID")
     status: str = Field(default="ok", description="响应状态: ok 正常 / human_chat 人工接待中")
     response: str = Field(..., description="回复内容")
@@ -96,4 +80,4 @@ class ChatHistoryResponse(BaseModel):
     session_id: str = Field(..., description="会话ID")
     messages: List[ChatHistoryItem] = Field(default_factory=list, description="消息列表")
     total: int = Field(..., description="总消息数")
-
+

@@ -1,67 +1,58 @@
-"""
-LangGraph 状态持久化配置 — AsyncRedisSaver
-
-AsyncRedisSaver 支持 FastAPI async 接口的异步调用。
-
-"""
+"""LangGraph AsyncSqliteSaver 状态持久化。"""
 
 import logging
+import os
 from typing import Optional
 
-from langgraph.checkpoint.redis import AsyncRedisSaver
+import aiosqlite
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 logger = logging.getLogger(__name__)
 
-_saver: Optional[AsyncRedisSaver] = None
+_conn: Optional[aiosqlite.Connection] = None
+_saver: Optional[AsyncSqliteSaver] = None
 
 
-def _get_redis_config() -> tuple[str, str | None]:
-    """获取 Redis 连接配置，优先从 app 配置读取"""
+def _get_db_path() -> str:
+    """获取 SQLite 检查点路径"""
     try:
         from app.core.config import get_settings
 
-        cfg = get_settings()
-        return cfg.REDIS_URL, cfg.REDIS_PASSWORD
+        return get_settings().DB_PATH
     except Exception:
-        return "redis://localhost:6379/0", None
+        return "./data/game_support.db"
 
 
 async def init_checkpointer() -> None:
-    """初始化 AsyncRedisSaver（应用启动时调用）"""
-    global _saver
+    """初始化 AsyncSqliteSaver（应用启动时调用）"""
+    global _conn, _saver
     if _saver is not None:
         return
 
-    redis_url, password = _get_redis_config()
-    try:
-        conn_args = {"password": password} if password else {}
-        _saver = AsyncRedisSaver(redis_url=redis_url, connection_args=conn_args)
-        # 0.4.x AsyncRedisSaver 用 asetup() 做异步初始化（创建索引等）
-        await _saver.asetup()
-        logger.info("AsyncRedisSaver initialized — Agent state in Redis (%s)", redis_url)
-    except Exception as exc:
-        logger.critical(
-            "AsyncRedisSaver init failed — is Redis running at %s? %s", redis_url, exc
-        )
-        raise
+    db_path = _get_db_path()
+    parent = os.path.dirname(os.path.abspath(db_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    _conn = await aiosqlite.connect(db_path)
+    # 允许多协程共用同一连接（FastAPI 异步场景）
+    await _conn.execute("PRAGMA journal_mode=WAL;")
+    _saver = AsyncSqliteSaver(_conn)
+    await _saver.setup()
+    logger.info("AsyncSqliteSaver initialized — Agent state in SQLite (%s)", db_path)
 
 
-async def get_checkpointer() -> AsyncRedisSaver:
-    """获取 AsyncRedisSaver（用于 async invoke / astream）"""
+async def get_checkpointer() -> AsyncSqliteSaver:
+    """获取 AsyncSqliteSaver（用于 async invoke / astream）"""
     if _saver is None:
         await init_checkpointer()
     return _saver
 
 
-def get_sync_checkpointer() -> AsyncRedisSaver:
-    """
-    获取 AsyncRedisSaver（用于同步 invoke / Command resume）
-
-    AsyncRedisSaver 同时支持同步和异步操作，返回同一实例。
-    """
-    if _saver is None:
-        raise RuntimeError(
-            "AsyncRedisSaver not initialized. Ensure FastAPI startup completed "
-            "or Redis is reachable."
-        )
-    return _saver
+async def close_checkpointer() -> None:
+    """关闭 SQLite 连接（应用关闭时调用）"""
+    global _conn, _saver
+    _saver = None
+    if _conn is not None:
+        await _conn.close()
+        _conn = None

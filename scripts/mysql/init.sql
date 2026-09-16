@@ -20,6 +20,9 @@ CREATE DATABASE IF NOT EXISTS game_support
 USE game_support;
 
 SET NAMES utf8mb4;
+SET character_set_client = utf8mb4;
+SET character_set_connection = utf8mb4;
+SET character_set_results = utf8mb4;
 
 -- ------------------------------------------------------------
 -- 玩家表（对应游戏服 player / character）
@@ -97,7 +100,16 @@ VALUES
     ('10018', '萌新求带', 's3', 12, 0, 'normal',            NULL, 45.00,   NULL, '2026-05-10 16:30:00'),
     ('10019', '代充嫌疑', 's1', 50, 3, 'banned',            '使用非法第三方代充，违反用户协议第3.5条', 5000.00, NULL, '2026-01-05 10:00:00'),
     ('10020', '至尊VIP',  's1', 65, 5, 'normal',            NULL, 10000.00, NULL, '2026-05-29 06:00:00')
-ON DUPLICATE KEY UPDATE nickname = VALUES(nickname);
+ON DUPLICATE KEY UPDATE
+    nickname = VALUES(nickname),
+    server_id = VALUES(server_id),
+    level = VALUES(level),
+    vip_level = VALUES(vip_level),
+    status = VALUES(status),
+    ban_reason = VALUES(ban_reason),
+    recharge_total = VALUES(recharge_total),
+    abnormal_detail = VALUES(abnormal_detail),
+    last_login = VALUES(last_login);
 
 -- ------------------------------------------------------------
 -- Mock 工单（每个玩家 0~2 条，演示按 player_uid 隔离查询）

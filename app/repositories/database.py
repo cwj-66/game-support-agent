@@ -1,6 +1,4 @@
-"""
-工单数据库（MySQL support_tickets 表）
-"""
+"""工单 MySQL 数据访问。"""
 
 import json
 import random

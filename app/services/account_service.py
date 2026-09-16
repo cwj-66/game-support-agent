@@ -1,6 +1,4 @@
-"""
-账号查询业务逻辑服务层
-"""
+"""账号查询业务逻辑。"""
 
 from typing import Any, Optional
 
@@ -15,18 +13,8 @@ FIELD_GROUPS = {
 }
 
 
-def _fetch_player_mysql(user_id: str) -> Optional[dict[str, Any]]:
-    """从 MySQL game_players 读取一条记录"""
-    with get_mysql_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM game_players WHERE uid = %s",
-                (user_id,),
-            )
-            row = cur.fetchone()
-    if not row:
-        return None
-
+def _row_to_player(row: dict[str, Any]) -> dict[str, Any]:
+    """将 game_players 行转为前端可用的档案字典"""
     last_login = row.get("last_login")
     if last_login is not None and hasattr(last_login, "strftime"):
         last_login = last_login.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -43,6 +31,29 @@ def _fetch_player_mysql(user_id: str) -> Optional[dict[str, Any]]:
         "abnormal_detail": row.get("abnormal_detail"),
         "last_login": last_login,
     }
+
+
+def _fetch_player_mysql(user_id: str) -> Optional[dict[str, Any]]:
+    """从 MySQL game_players 读取一条记录"""
+    with get_mysql_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM game_players WHERE uid = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return _row_to_player(row)
+
+
+def list_demo_players() -> list[dict[str, Any]]:
+    """列出全部 Mock 玩家，供测试页选择登录"""
+    with get_mysql_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM game_players ORDER BY uid")
+            rows = cur.fetchall()
+    return [_row_to_player(row) for row in rows]
 
 
 def _filter_fields(record: dict[str, Any], fields: str) -> dict[str, Any]:
@@ -63,6 +74,11 @@ def _filter_fields(record: dict[str, Any], fields: str) -> dict[str, Any]:
             if f in record:
                 result[f] = record[f]
     return result
+
+
+def get_player(user_id: str) -> Optional[dict[str, Any]]:
+    """按 UID 读取玩家档案；不存在则返回 None。"""
+    return _fetch_player_mysql(user_id)
 
 
 def lookup_account_core(user_id: str, fields: str = "") -> dict:

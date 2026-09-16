@@ -1,7 +1,4 @@
-"""
-LLM 自主决策节点（ReAct 风格）
-LLM 通过 bind_tools 主动决定调用哪个工具，或直接生成回复
-"""
+"""LLM 推理节点：绑定工具自主决策。"""
 
 from typing import Dict, Any
 
@@ -15,9 +12,9 @@ from app.core.config import get_settings
 
 
 def _build_llm_from_settings() -> ChatOpenAI:
-    """从 .env 配置创建大模型实例"""
+    """从配置创建 LLM 实例"""
     settings = get_settings()
-    model_name = settings.REASONING_MODEL_NAME or settings.MODEL_NAME or "qwen-turbo"
+    model_name = settings.REASONING_MODEL_NAME or "qwen-turbo"
     base_url = settings.LLM_BASE_URL or "https://dashscope.aliyuncs.com/compatible-mode/v1"
     extra_body = (
         {"thinking": {"type": "disabled"}}
@@ -34,19 +31,7 @@ def _build_llm_from_settings() -> ChatOpenAI:
 
 
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:
-    """
-    推理节点：LLM 绑定工具后自主决策（ReAct 风格）
-
-    LLM 收到用户问题后可以：
-    - 调用 query_knowledge 查询游戏知识库
-    - 调用 lookup_account 查询玩家账号状态（按需传 fields 参数）
-    - 调用 check_ticket 查询玩家历史工单情况
-    - 调用 propose_ticket 向用户提出工单创建建议
-    - 调用 propose_human_escalation 向用户提出转人工确认
-    - 直接输出回答（不调用任何工具）
-
-    工具结果会追加到 messages，LLM 可多轮循环调用直到给出最终回复。
-    """
+    """LLM 绑定工具后自主决策，可调用工具或直接回复。"""
     user_id = state.get("user_id", "")
     history = state.get("messages", [])
     metadata = state.get("metadata", {})
@@ -54,7 +39,6 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     system_prompt = GAME_SUPPORT_SYSTEM_PROMPT
     if user_id:
         system_prompt += f"\n\n当前玩家 UID：{user_id}"
-        # 注入跨会话长期记忆摘要（非当前对话原文）
         try:
             from app.services.long_term_memory import format_memory_prompt_block
             memory_block = await format_memory_prompt_block(user_id)
@@ -63,7 +47,6 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # history 已含本轮 HumanMessage（由 create_turn_input 写入），不再重复追加
     llm_messages = [
         SystemMessage(content=system_prompt),
         *history,
@@ -71,7 +54,6 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
 
     llm = _build_llm_from_settings()
 
-    # propose_ticket 已提出 → 去掉工具，让 LLM 生成自然的过渡告知语
     if metadata.get("ticket_offer_pending"):
         metadata.pop("ticket_offer_pending", None)
         try:
@@ -91,7 +73,6 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
             "node_trace": ["reasoning"],
         }
 
-    # propose_human_escalation 已提出 → 去掉工具，生成过渡告知语（含问题总结）
     if metadata.get("human_offer_pending"):
         metadata.pop("human_offer_pending", None)
         try:
@@ -111,21 +92,18 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
             "node_trace": ["reasoning"],
         }
 
-    # 重复工具调用 → 摘掉工具，强制生成最终回复
     if metadata.get("tool_repeated_call"):
         metadata.pop("tool_repeated_call", None)
         try:
             response: AIMessage = await llm.ainvoke(llm_messages)
         except Exception as exc:
             response = AIMessage(content=f"抱歉，处理您的请求时出现问题，建议联系人工客服。（错误：{exc}）")
-        has_tool_calls = False
         return {
             "messages": [response],
             "metadata": metadata,
             "node_trace": ["reasoning"],
         }
 
-    # 超限 → 摘掉工具，让 LLM 基于已有上下文（含 system_info 指导信息）生成最终回复
     if metadata.get("max_rounds_reached"):
         metadata.pop("max_rounds_reached", None)
         try:
@@ -144,7 +122,6 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     try:
         response: AIMessage = await llm_with_tools.ainvoke(llm_messages)
     except Exception as exc:
-        # 降级：直接生成兜底回复，避免崩溃
         response = AIMessage(content=f"抱歉，处理您的请求时出现问题，建议联系人工客服。（错误：{exc}）")
 
     has_tool_calls = bool(getattr(response, "tool_calls", None))

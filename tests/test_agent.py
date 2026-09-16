@@ -47,23 +47,30 @@ class TestCheckpointer:
 
     @pytest.mark.asyncio
     async def test_get_checkpointer_singleton(self):
-        """测试checkpointer单例行为（RedisSaver mocked）"""
+        """测试 checkpointer 单例行为（AsyncSqliteSaver mocked）"""
         from agent import checkpointer
 
         checkpointer._saver = None
+        checkpointer._conn = None
 
-        with patch("agent.checkpointer.RedisSaver") as mock_redis_saver:
+        with patch("agent.checkpointer.aiosqlite.connect", new_callable=AsyncMock) as mock_connect, \
+             patch("agent.checkpointer.AsyncSqliteSaver") as mock_saver_cls, \
+             patch("agent.checkpointer.os.makedirs"):
+            mock_conn = AsyncMock()
+            mock_connect.return_value = mock_conn
             mock_instance = MagicMock()
-            mock_redis_saver.return_value = mock_instance
+            mock_instance.setup = AsyncMock()
+            mock_saver_cls.return_value = mock_instance
 
             cp1 = await checkpointer.get_checkpointer()
             cp2 = await checkpointer.get_checkpointer()
 
             assert cp1 is cp2
-            assert cp1 is not None
-            assert mock_redis_saver.call_count == 1
+            assert cp1 is mock_instance
+            assert mock_saver_cls.call_count == 1
 
         checkpointer._saver = None
+        checkpointer._conn = None
 
 
 class TestAgentNodes:

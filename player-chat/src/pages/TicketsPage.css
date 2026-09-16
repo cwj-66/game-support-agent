@@ -21,6 +21,12 @@
   font-weight: 600 !important;
 }
 
+.tickets-toolbar .ant-typography-secondary {
+  display: block;
+  margin-top: 4px;
+  font-weight: 400 !important;
+}
+
 .tickets-empty {
   padding: 60px 0;
 }

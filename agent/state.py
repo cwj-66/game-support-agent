@@ -1,7 +1,4 @@
-"""
-AgentState 定义
-LangGraph图的状态结构，包含消息、人工接待标记、工单提议等
-"""
+"""LangGraph Agent 状态定义。"""
 
 import operator
 from typing import TypedDict, Annotated, List, Optional, Dict, Any
@@ -10,37 +7,19 @@ from langgraph.graph.message import add_messages
 from datetime import datetime, timezone
 
 
-# LangGraph主状态定义
 class AgentState(TypedDict):
-    """
-    LangGraph 主状态定义
-
-    这是贯穿整个Agent执行流程的状态容器，
-    会被checkpointer持久化，支持断点恢复。
-    """
-    # 对话历史，add_messages reducer 自动追加
+    """Agent 执行状态，由 checkpointer 持久化。"""
     messages: Annotated[List[BaseMessage], add_messages]
-    # 本轮用户原始问题
     user_query: str
-    # 玩家游戏UID
     user_id: str
-    # 会话唯一标识，也是 checkpointer 的 thread_id
     session_id: str
-    # 当前是否处于人工接待模式（玩家确认转人工后由 API 设为 True）
     human_mode: bool
-    # 全部轮次的工具调用审计记录
     tool_calls: List[Dict[str, Any]]
-    # 最终回复
     final_response: Optional[str]
-    # 关联的工单 ID（可选）
     ticket_id: Optional[str]
-    # 运行时元数据
     metadata: Dict[str, Any]
-    # 节点执行路径追踪
     node_trace: Annotated[List[str], operator.add]
-    # 待确认的工单 offer
     ticket_offer: Optional[Dict[str, Any]]
-    # 待确认的转人工 offer
     human_offer: Optional[Dict[str, Any]]
 
 

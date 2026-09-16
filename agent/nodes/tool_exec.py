@@ -1,10 +1,4 @@
-"""
-通用工具执行节点
-读取 AIMessage.tool_calls，动态分发并执行对应工具
-
-兜底策略：
-轮次达上限 → 注入系统提示，让 LLM 基于已有信息生成最终回复
-"""
+"""工具执行节点：按 tool_calls 分发执行。"""
 
 import json
 from datetime import datetime, timezone
@@ -15,22 +9,13 @@ from langchain_core.messages import AIMessage, ToolMessage
 from ..state import AgentState
 from ..tools import get_all_tools, simplify_tool_context
 
-# 最大 ReAct 轮次，超限后不再执行新工具调用
 MAX_REACT_ROUNDS = 5
 
 
 async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
-    """
-    工具执行节点：通用分发器
-
-    职责：
-    1. 找到最后一条带 tool_calls 的 AIMessage
-    2. 依次执行每个工具调用
-    3. 将 ToolMessage 写回 messages
-    """
+    """执行 AIMessage 中的 tool_calls，写回 ToolMessage。"""
     messages = state.get("messages", [])
 
-    # 找最后一条带 tool_calls 的 AIMessage
     last_ai: AIMessage | None = None
     for msg in reversed(messages):
         if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
@@ -45,11 +30,9 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     tool_call_records: List[Dict[str, Any]] = []
     metadata = state.get("metadata", {})
 
-    # 计算已执行的 ReAct 轮次
     prev_tool_calls = state.get("tool_calls", [])
     current_round = len(prev_tool_calls) + 1
 
-    # 超限 → 不执行工具，注入指导信息让 LLM 基于已有上下文生成最终回复
     if current_round >= MAX_REACT_ROUNDS:
         metadata["max_rounds_reached"] = True
         return {
@@ -64,7 +47,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             "node_trace": ["tool_exec"],
         }
 
-    # 检查特殊工具：propose_ticket / propose_human_escalation（生成确认按钮，不真正执行）
     for tc in last_ai.tool_calls:
         if tc["name"] == "propose_ticket":
             issue_type = tc["args"].get("issue_type", "other")
@@ -130,7 +112,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             tool_call_records.append(record)
             continue
 
-        # 重复调用检测：相同 tool + 相同 args 已在之前执行过，跳过执行
         is_duplicate = False
         if tool_name in ("check_ticket", "lookup_account"):
             for prev_call in state.get("tool_calls", []):
@@ -162,7 +143,6 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             record["status"] = "completed"
             record["output"] = result_str
 
-            # query_knowledge 返回 JSON，解析后存入 metadata
             if tool_name == "query_knowledge":
                 try:
                     metadata["knowledge_result"] = json.loads(result_str)

@@ -12,13 +12,20 @@
 }
 
 .player-header-inner {
-  max-width: 960px;
+  max-width: 1080px;
   margin: 0 auto;
   padding: 14px 20px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
+}
+
+.player-brand-block {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
 }
 
 .player-title {
@@ -27,6 +34,7 @@
   font-weight: 700;
   color: #fff;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .player-title::before {
@@ -62,6 +70,51 @@
   background: #fff;
   font-weight: 600;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.workbench-entry {
+  margin-left: auto;
+  padding: 7px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 10px;
+  color: #fff;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(0, 0, 0, 0.12);
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.workbench-entry:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+  border-color: #fff;
+}
+
+.player-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.player-user-name {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.player-user-name em {
+  font-style: normal;
+  font-weight: 400;
+  opacity: 0.8;
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.player-user .ant-btn-background-ghost {
+  color: #fff !important;
+  border-color: rgba(255, 255, 255, 0.65) !important;
 }
 
 .player-main {

@@ -1,7 +1,4 @@
-"""
-工单 API 端点
-玩家接口需 JWT 鉴权，只能操作自己的工单；统计/更新需审核员 token。
-"""
+"""工单 API。"""
 import json
 from typing import Optional
 
@@ -120,6 +117,42 @@ async def get_ticket_statistics(
 ):
     """获取工单统计数据（需审核员 token）"""
     return get_ticket_stats()
+
+
+@router.get("/ticket/admin/list", response_model=TicketListResponse, summary="全部工单（客服）")
+async def list_all_tickets(
+    status: Optional[str] = Query(default=None, description="按状态筛选"),
+    player_uid: Optional[str] = Query(default=None, description="按玩家 UID 筛选"),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    _token: str = Depends(require_reviewer_token),
+):
+    """从数据库列出全部工单，不限玩家。"""
+    tickets, total = list_tickets(
+        status=status,
+        player_uid=player_uid or None,
+        page=page,
+        page_size=page_size,
+    )
+    tickets = [_simplify_ticket_tool_context(t) for t in tickets]
+    return TicketListResponse(
+        tickets=tickets,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/ticket/admin/{ticket_id}", response_model=Ticket, summary="工单详情（客服）")
+async def get_admin_ticket_detail(
+    ticket_id: str,
+    _token: str = Depends(require_reviewer_token),
+):
+    """客服查看任意工单详情。"""
+    ticket = get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail=f"工单 {ticket_id} 不存在")
+    return _simplify_ticket_tool_context(ticket)
 
 
 @router.get("/ticket/{ticket_id}", response_model=Ticket, summary="查询工单详情")

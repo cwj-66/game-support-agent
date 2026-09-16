@@ -22,6 +22,25 @@
   color: var(--text);
 }
 
+.chat-card .ant-card-extra {
+  margin-left: 12px;
+}
+
+.chat-profile-hint {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--primary);
+  background: #f5f7ff;
+  border-radius: 8px;
+  line-height: 1.6;
+}
+
+.player-profile-desc .ant-descriptions-item-label {
+  width: 88px;
+  color: var(--text-secondary);
+}
+
 .chat-card .ant-card-body {
   display: flex;
   flex-direction: column;
@@ -32,6 +51,13 @@
   margin-left: 10px !important;
   border-radius: 20px !important;
   font-size: 12px !important;
+}
+
+.chat-player-label {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .message-list {

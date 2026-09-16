@@ -1,7 +1,4 @@
-"""
-统一错误处理
-定义应用级别的异常类和错误响应格式
-"""
+"""应用异常类与统一错误响应。"""
 
 import traceback
 from typing import Any, Dict, Optional
@@ -11,16 +8,8 @@ from fastapi.requests import Request
 
 
 class AppException(HTTPException):
-    """
-    应用基础异常类
-    
-    Attributes:
-        status_code: HTTP状态码
-        error_code: 业务错误码
-        message: 错误消息
-        details: 额外详情
-    """
-    
+    """应用基础异常。"""
+
     def __init__(
         self,
         status_code: int,
@@ -33,8 +22,6 @@ class AppException(HTTPException):
         self.message = message
         self.details = details or {}
 
-
-# ============ 具体业务异常 ============
 
 class SessionNotFoundException(AppException):
     """会话不存在"""
@@ -69,14 +56,8 @@ class HumanReviewNotPendingException(AppException):
         )
 
 
-# ============ 异常处理器 ============
-
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
-    """
-    应用异常统一处理器
-    
-    将AppException转换为标准JSON响应
-    """
+    """将 AppException 转为标准 JSON 响应。"""
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -90,11 +71,7 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """
-    通用异常处理器
-
-    捕获所有未处理的异常，打印完整堆栈到控制台
-    """
+    """捕获未处理异常，记录堆栈并返回通用错误。"""
     print(f"\n{'='*60}")
     print(f"[ERROR] {request.method} {request.url.path}")
     print(f"[ERROR] {type(exc).__name__}: {exc}")
@@ -106,13 +83,7 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
             "success": False,
             "error_code": "INTERNAL_ERROR",
             "message": "服务器内部错误",
-            "details": {"error": str(exc)} if True else {},  # DEBUG时显示详情
+            "details": {},
             "path": request.url.path
         }
-        )
-
-
-# TODO: 未来扩展
-# - 添加错误码国际化
-# - 实现错误日志自动上报
-# - 添加请求追踪ID
+    )

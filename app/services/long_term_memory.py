@@ -1,9 +1,4 @@
-"""
-长期记忆存储
-
-按 user_id 保存历史会话摘要（2h 过期归档产生）。
-新会话开始时注入 system prompt，不做全文对话恢复。
-"""
+"""长期记忆：按 user_id 保存历史会话摘要。"""
 
 import json
 import logging
@@ -13,7 +8,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _PREFIX = "ltm:"
-_MAX_ENTRIES = 10  # 每用户最多保留条数
+_MAX_ENTRIES = 10
 _memory: dict[str, list[dict]] = {}
 
 _redis_client = None

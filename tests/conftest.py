@@ -1,6 +1,4 @@
-"""
-Pytest 配置和共享fixture
-"""
+"""Pytest 共享 fixture。"""
 
 import pytest
 import pytest_asyncio
@@ -15,7 +13,6 @@ def test_data_dir() -> Generator[Path, None, None]:
     """创建临时测试数据目录"""
     temp_dir = Path(tempfile.mkdtemp(prefix="game_support_test_"))
     yield temp_dir
-    # 测试结束后清理
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
@@ -58,11 +55,9 @@ async def async_http_client():
         yield client
 
 
-# 标记慢测试
 pytest.SLOW = pytest.mark.slow
 
 
-# 自定义标记
 def pytest_configure(config):
     """配置pytest"""
     config.addinivalue_line("markers", "slow: marks tests as slow")

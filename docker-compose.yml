@@ -1,7 +1,20 @@
 # ============================================================
-# Game Support Agent Docker Compose
-# mysql + redis + agent-api + web-ui 同一项目，一条命令一起启动：
-#   docker compose up -d
+# Game Support Agent + Enterprise RAG（同一套中间件）
+#
+# 前置：两个仓库同级目录
+#   PythonProject/game-support-agent   ← 在此执行 compose
+#   PythonProject/enterprise-rag
+# 若 RAG 不在 ../enterprise-rag，在 .env 设 ENTERPRISE_RAG_DIR
+#
+#   docker compose up -d --build
+#
+# 访问：
+#   前端     http://localhost:5175        玩家 /admin 客服台
+#   Agent    http://localhost:8002/docs
+#   RAG UI   http://localhost:8000/ui
+#
+# 内存建议 ≥ 4GB。不要同时 up enterprise-rag/docker-compose.yml
+# （会再起一套 MySQL/Qdrant）。
 # ============================================================
 
 services:
@@ -9,7 +22,7 @@ services:
     image: mysql:8.0
     container_name: game-support-mysql
     ports:
-      - "3307:3306"
+      - "127.0.0.1:3307:3306"
     environment:
       MYSQL_ROOT_PASSWORD: root_pass
       MYSQL_DATABASE: game_support
@@ -18,23 +31,41 @@ services:
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=256M
+      --performance-schema=OFF
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./scripts/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./scripts/mysql/init.sql:/docker-entrypoint-initdb.d/01_game.sql:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot_pass"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 30s
+
+  # 幂等创建 rag_database：新数据卷、旧数据卷都能跑
+  db-init:
+    image: mysql:8.0
+    container_name: game-support-db-init
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_PWD: root_pass
+    volumes:
+      - ./scripts/mysql/init_rag.sql:/init_rag.sql:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - mysql -h mysql -u root --default-character-set=utf8mb4 < /init_rag.sql
+    restart: "no"
 
   redis:
-    image: redis/redis-stack-server:latest
+    image: redis:7-alpine
     container_name: game-support-redis
     ports:
-      - "6379:6379"
-    environment:
-      - REDIS_ARGS=--appendonly yes
+      - "127.0.0.1:6380:6379"
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
     restart: unless-stopped
@@ -44,17 +75,98 @@ services:
       timeout: 3s
       retries: 3
 
-  rag-service:
-    image: enterprise-rag:latest
-    container_name: game-support-rag
+  qdrant:
+    image: qdrant/qdrant
+    container_name: game-support-qdrant
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+
+  rag-api:
+    build:
+      context: ${ENTERPRISE_RAG_DIR:-../enterprise-rag}
+      dockerfile: Dockerfile
+    container_name: game-support-rag-api
     ports:
       - "8000:8000"
     environment:
-      - PORT=8000
-      - LOG_LEVEL=INFO
+      - API_KEY=${RAG_API_KEY:-dev-rag-key}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY:-}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION=enterprise_rag
+      - DATABASE_URL=mysql+pymysql://rag_user:rag_password@mysql:3306/rag_database
+      - DECOMPOSER_ENABLED=${DECOMPOSER_ENABLED:-true}
+      - MINERU_MODEL_SOURCE=${MINERU_MODEL_SOURCE:-local}
+      - HF_HOME=/app/.cache/huggingface
     volumes:
-      - rag-data:/app/data
+      - ${ENTERPRISE_RAG_DIR:-../enterprise-rag}/data:/app/data
+      - ${ENTERPRISE_RAG_DIR:-../enterprise-rag}/storage:/app/storage
+      - rag-hf-cache:/app/.cache/huggingface
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_started
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: game-support-mcp
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8001
+      - RAG_SERVICE_URL=http://rag-api:8000
+      - RAG_API_KEY=${RAG_API_KEY:-dev-rag-key}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.5-plus}
+      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen-turbo}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=game_support
+      - MYSQL_PASSWORD=game_support_pass
+      - MYSQL_DATABASE=game_support
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: ["python", "mcp_server.py"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rag-api:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('127.0.0.1',8001),2); s.close()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   agent-api:
     build:
@@ -64,16 +176,19 @@ services:
     ports:
       - "8002:8002"
     environment:
+      - HOST=0.0.0.0
       - PORT=8002
-      - RAG_SERVICE_URL=http://rag-service:8000
+      - RAG_SERVICE_URL=http://rag-api:8000
+      - RAG_API_KEY=${RAG_API_KEY:-dev-rag-key}
+      - MCP_SERVER_URL=http://mcp-server:8001
       - REDIS_URL=redis://redis:6379/0
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - MODEL_NAME=${MODEL_NAME:-qwen-turbo}
+      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.5-plus}
+      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen-turbo}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      - HIL_ENABLED=${HIL_ENABLED:-true}
-      - API_KEY=${API_KEY}
-      - GAME_JWT_SECRET=${GAME_JWT_SECRET}
+      - REVIEWER_API_KEY=${REVIEWER_API_KEY:-dev}
+      - GAME_JWT_SECRET=${GAME_JWT_SECRET:-your-game-jwt-secret-change-me}
       - MYSQL_HOST=mysql
       - MYSQL_PORT=3306
       - MYSQL_USER=game_support
@@ -88,17 +203,19 @@ services:
         condition: service_healthy
       mysql:
         condition: service_healthy
+      mcp-server:
+        condition: service_healthy
+      rag-api:
+        condition: service_started
     restart: unless-stopped
 
-  web-ui:
+  player-chat:
     build:
-      context: .
-      dockerfile: Dockerfile.web
-    container_name: game-support-web
+      context: ./player-chat
+      dockerfile: Dockerfile
+    container_name: game-support-player-chat
     ports:
-      - "8501:8501"
-    environment:
-      - API_BASE_URL=http://agent-api:8002/api/v1
+      - "${FRONTEND_PORT:-5175}:80"
     depends_on:
       - agent-api
     restart: unless-stopped
@@ -106,4 +223,5 @@ services:
 volumes:
   mysql-data:
   redis-data:
-  rag-data:
+  qdrant-data:
+  rag-hf-cache:

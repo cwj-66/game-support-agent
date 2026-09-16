@@ -1,9 +1,4 @@
-"""
-FastAPI 入口
-整合所有 API 路由和全局配置
-
-环境变量必须提前导入。
-"""
+"""FastAPI 入口。"""
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -35,22 +30,19 @@ async def lifespan(app: FastAPI):
     if settings.LANGCHAIN_TRACING_V2 and settings.LANGCHAIN_API_KEY:
         print(f"[STARTUP] LangSmith: {settings.LANGCHAIN_PROJECT}")
 
-    # MCP 连接失败则启动中止
     try:
         await init_mcp_client(settings.MCP_SERVER_URL + "/mcp")
     except Exception as e:
         raise RuntimeError(f"MCP 连接失败: {e}") from e
 
-    # 初始化 RedisSaver（Agent 状态持久化）
-    try:
-        from agent.checkpointer import init_checkpointer
-        await init_checkpointer()
-        print("[STARTUP] Redis OK")
-    except Exception as e:
-        print(f"[STARTUP] Redis 失败: {e}")
-        print("[STARTUP] 请执行: docker compose up -d redis")
+    from agent.checkpointer import close_checkpointer, init_checkpointer
 
-    # 初始化 MySQL（玩家 + 工单）
+    try:
+        await init_checkpointer()
+        print("[STARTUP] SQLite checkpointer OK")
+    except Exception as e:
+        raise RuntimeError(f"SQLite checkpointer 初始化失败: {e}") from e
+
     try:
         from app.repositories.database import init_db
         init_db()
@@ -62,6 +54,7 @@ async def lifespan(app: FastAPI):
     yield
 
     print("[SHUTDOWN] stopped")
+    await close_checkpointer()
     await close_mcp_client()
 
 
@@ -78,7 +71,6 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # 注册 CORS 中间件（供浏览器端小程序/管理后台跨域访问）
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

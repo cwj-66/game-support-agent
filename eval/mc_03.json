@@ -9,11 +9,11 @@
       {
         "step": 1,
         "question": "我的充值没到账，帮我创建工单",
-        "ground_truth": "查询用户（UID 10003）的充值情况（充值异常、充值未到账）后，为用户创建充值问题工单（payment），给出工单号和1-3个工作日处理时限。",
+        "ground_truth": "查询用户（UID 10003）的充值情况后，调用 propose_ticket 提议创建充值问题工单（payment），告知可通过确认按钮建单。",
         "expected_tool_sequence": [
-          {"name": "create_ticket", "args": {}}
+          {"name": "propose_ticket", "args": {}}
         ],
-        "keywords": ["TK-", "充值", "工单", "payment"]
+        "keywords": ["充值", "工单", "payment"]
       },
       {
         "step": 2,

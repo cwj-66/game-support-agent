@@ -1,7 +1,4 @@
-"""
-人工接待会话模型
-定义待接待列表与客服回复的请求/响应
-"""
+"""人工接待会话模型。"""
 
 from typing import Optional, Literal
 from pydantic import BaseModel, Field

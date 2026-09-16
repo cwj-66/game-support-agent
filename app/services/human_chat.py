@@ -1,7 +1,4 @@
-"""
-人工接待服务
-通过 checkpoint 直接读写消息，不经过 LangGraph interrupt。
-"""
+"""人工接待：通过 checkpoint 读写消息。"""
 
 from datetime import datetime, timezone
 from typing import Any

@@ -1,9 +1,4 @@
-"""
-LangGraph checkpoint 辅助工具
-
-用于对话外（如 ticket-confirm）直接向 checkpoint 追加消息，
-无需重新跑 Agent 图。
-"""
+"""LangGraph checkpoint 辅助：对话外追加消息。"""
 
 from typing import Any
 

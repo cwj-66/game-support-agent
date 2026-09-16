@@ -21,9 +21,9 @@ def simplify_tool_context(records: List[Dict[str, Any]]) -> List[Dict[str, str]]
         if isinstance(inp, dict):
             if tool == "lookup_account":
                 entry["args"] = inp.get("fields", "") or ""
-            elif tool in ("create_ticket", "propose_ticket"):
+            elif tool == "propose_ticket":
                 issue = inp.get("issue_type", "")
-                desc = inp.get("description", "") or inp.get("summary", "")
+                desc = inp.get("summary", "") or inp.get("description", "")
                 entry["args"] = f"{issue}: {desc[:60]}" if desc else issue
             elif tool == "propose_human_escalation":
                 entry["args"] = (inp.get("summary", "") or "")[:60]
@@ -46,8 +46,8 @@ def simplify_tool_context(records: List[Dict[str, Any]]) -> List[Dict[str, str]]
                 if tool == "lookup_account":
                     parts = [data.get(k, "") for k in ("status", "ban_reason", "last_login") if data.get(k)]
                     entry["result"] = " | ".join(parts)[:120]
-                elif tool in ("create_ticket", "propose_ticket"):
-                    entry["result"] = f"工单 {data.get('ticket_id', '')} ({data.get('status', '')})"
+                elif tool == "propose_ticket":
+                    entry["result"] = f"提议工单 ({data.get('issue_type', '')})"
                 elif tool == "query_knowledge":
                     entry["result"] = "有结果" if data.get("has_answer") else "无结果"
                 elif tool == "check_ticket":

@@ -1,6 +1,4 @@
-"""
-工单数据模型
-"""
+"""工单数据模型。"""
 from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -15,7 +13,7 @@ class TicketCreate(BaseModel):
     """创建工单请求（player_uid 由 JWT 提供，无需传入）"""
     player_uid: Optional[str] = Field(
         default=None,
-        description="（已废弃）由 JWT 鉴权自动填充",
+        description="兼容旧客户端；实际 UID 由 JWT 鉴权自动填充",
         max_length=64,
     )
     title: str = Field(..., description="工单标题", min_length=1, max_length=200)
@@ -37,7 +35,7 @@ class Ticket(BaseModel):
     player_uid: str
     title: str
     description: str
-    category: Optional[TicketCategory] = Field(default=None, description="Agent分类结果")
+    category: Optional[str] = Field(default=None, description="分类，兼容库内历史取值")
     priority: TicketPriority = "P2"
     status: TicketStatus = "pending"
     agent_reply: Optional[str] = Field(default=None, description="Agent自动回复")
