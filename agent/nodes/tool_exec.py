@@ -145,7 +145,10 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
 
             if tool_name == "query_knowledge":
                 try:
-                    metadata["knowledge_result"] = json.loads(result_str)
+                    knowledge_result = json.loads(result_str)
+                    metadata["knowledge_result"] = knowledge_result
+                    if isinstance(knowledge_result, dict):
+                        metadata["sources"] = knowledge_result.get("sources") or []
                 except (json.JSONDecodeError, ValueError):
                     pass
 

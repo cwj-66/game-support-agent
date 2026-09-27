@@ -390,8 +390,9 @@ async def confirm_ticket_offer(
         description=ticket_offer.get("summary", ""),
     )
 
-    ticket_id = result.get("ticket_id")
-    estimated = result.get("estimated_response", "3-5 个工作日")
+    created = result.get("status") == "submitted" and bool(result.get("ticket_id"))
+    ticket_id = result.get("ticket_id") if created else None
+    estimated = result.get("estimated_response") if created else None
 
     if ticket_id and tool_calls:
         try:
@@ -417,7 +418,7 @@ async def confirm_ticket_offer(
     )
 
     return TicketConfirmResponse(
-        status="created",
+        status="created" if created else "failed",
         ticket_id=ticket_id,
         estimated_response=estimated,
         issue_type=ticket_offer.get("issue_type"),

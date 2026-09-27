@@ -3,6 +3,7 @@ Agent 测试
 测试Agent完整流程
 """
 
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -144,6 +145,65 @@ class TestAgentNodes:
         assert len(result["tool_calls"]) == 1
         assert result["tool_calls"][0]["tool"] == "lookup_account"
         assert isinstance(result["messages"][0], ToolMessage)
+
+    @pytest.mark.asyncio
+    async def test_check_ticket_uses_authenticated_user_id(self):
+        from agent.nodes.tool_exec import tool_exec_node
+
+        state = create_initial_state("player-1_session", "player-1", "查工单")
+        state["messages"] = [AIMessage(content="", tool_calls=[{
+            "name": "check_ticket",
+            "args": {"ticket_id": "TK-1", "user_id": "player-2"},
+            "id": "call_ticket", "type": "tool_call",
+        }])]
+        mock_tool = MagicMock()
+        mock_tool.name = "check_ticket"
+        mock_tool.ainvoke = AsyncMock(return_value='{"found": false}')
+
+        with patch("agent.nodes.tool_exec.get_all_tools", return_value=[mock_tool]):
+            await tool_exec_node(state)
+
+        mock_tool.ainvoke.assert_awaited_once_with({
+            "ticket_id": "TK-1", "user_id": "player-1",
+        })
+
+    @pytest.mark.asyncio
+    async def test_query_knowledge_sources_reach_chat_response(self):
+        from agent.nodes.tool_exec import tool_exec_node
+        from app.api.v1.chat import send_message
+        from app.api.deps import CurrentPlayer
+        from app.models.chat import ChatRequest
+        from fastapi import BackgroundTasks
+
+        sources = [{"source": "faq.json", "text": "每日委托可获得原石", "score": 0.92}]
+        state = create_initial_state("player-1_session", "player-1", "如何获得原石？")
+        state["messages"] = [AIMessage(
+            content="", tool_calls=[{
+                "name": "query_knowledge", "args": {"question": "如何获得原石？"},
+                "id": "call_knowledge", "type": "tool_call",
+            }],
+        )]
+        mock_tool = MagicMock()
+        mock_tool.name = "query_knowledge"
+        mock_tool.ainvoke = AsyncMock(return_value=json.dumps({
+            "has_answer": True, "answer": "做每日委托", "sources": sources,
+        }, ensure_ascii=False))
+
+        with patch("agent.nodes.tool_exec.get_all_tools", return_value=[mock_tool]):
+            tool_result = await tool_exec_node(state)
+
+        assert tool_result["metadata"]["sources"] == sources
+        with patch("app.api.v1.chat.get_pending", new=AsyncMock(return_value=None)), \
+             patch("app.api.v1.chat.is_human_mode", new=AsyncMock(return_value=False)), \
+             patch("app.api.v1.chat.run_agent", new=AsyncMock(return_value={
+                 "final_response": "做每日委托", "metadata": tool_result["metadata"],
+             })):
+            response = await send_message(
+                ChatRequest(session_id="player-1_session", message="如何获得原石？"),
+                BackgroundTasks(), CurrentPlayer(user_id="player-1"), MagicMock(),
+            )
+
+        assert response.sources == sources
 
     @pytest.mark.asyncio
     async def test_tool_exec_propose_human_escalation(self):

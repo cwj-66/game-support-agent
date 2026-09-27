@@ -1,8 +1,5 @@
 """工单业务逻辑：issue_type 映射与数据库调用。"""
 
-import time
-import random
-
 TITLE_MAP = {
     "account_ban": "账号封禁申诉",
     "payment": "充值/退款问题",
@@ -26,12 +23,11 @@ ESTIMATED_MAP = {
 
 
 def create_ticket_core(user_id: str, issue_type: str, description: str) -> dict:
-    """创建工单：映射字段 → 写库 → 返回结果 dict。失败时生成降级 ticket_id。"""
+    """创建工单：仅在数据库写入并读回工单后返回成功。"""
     title = TITLE_MAP.get(issue_type, "客服工单")
     priority = PRIORITY_MAP.get(issue_type, "P2")
     estimated = ESTIMATED_MAP.get(issue_type, "3-5 个工作日")
 
-    db_error = None
     try:
         from app.repositories.database import create_ticket as db_create
         db_ticket = db_create(
@@ -41,10 +37,16 @@ def create_ticket_core(user_id: str, issue_type: str, description: str) -> dict:
             priority=priority,
         )
         ticket_id = db_ticket.ticket_id
+        if not ticket_id:
+            raise RuntimeError("数据库未返回工单号")
     except Exception as e:
-        ticket_id = f"TK-{time.strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
-        db_error = str(e)
-        print(f"[ticket_service] DB write failed, using fallback ID: {ticket_id} | {db_error}")
+        return {
+            "user_id": user_id,
+            "issue_type": issue_type,
+            "status": "failed",
+            "error": "工单创建失败，请稍后重试。",
+            "_health": {"ok": False, "confidence": 0.0, "message": str(e)},
+        }
 
     return {
         "ticket_id": ticket_id,
@@ -52,7 +54,7 @@ def create_ticket_core(user_id: str, issue_type: str, description: str) -> dict:
         "issue_type": issue_type,
         "status": "submitted",
         "estimated_response": estimated,
-        "_health": {"ok": True, "confidence": 0.95, "message": db_error},
+        "_health": {"ok": True, "confidence": 0.95, "message": None},
     }
 
 
@@ -63,7 +65,7 @@ def check_ticket_core(user_id: str, ticket_id: str = "") -> dict:
 
         if ticket_id:
             ticket = get_ticket(ticket_id)
-            if ticket is None:
+            if ticket is None or ticket.player_uid != user_id:
                 return {
                     "found": False,
                     "status": "not_found",
