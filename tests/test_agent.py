@@ -432,7 +432,9 @@ class TestAgentIntegration:
             "ticket_offer": None,
         }
 
-        with patch("agent.graph.get_graph") as mock_get_graph:
+        with patch("agent.graph.get_graph") as mock_get_graph, \
+             patch("app.services.session_store.expire_session_if_needed",
+                   new=AsyncMock(return_value=True)):
             mock_graph = AsyncMock()
             mock_graph.ainvoke = AsyncMock(return_value=mock_result)
             mock_get_graph.return_value = mock_graph
