@@ -17,5 +17,16 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // Initial data fetches set loading state before the request resolves.
+      'react-hooks/set-state-in-effect': 'off',
+    },
+  },
+  {
+    files: ['src/PlayerProfile.jsx', 'src/auth.jsx'],
+    rules: {
+      // These modules intentionally export shared UI helpers alongside components.
+      'react-refresh/only-export-components': 'off',
+    },
   },
 ])

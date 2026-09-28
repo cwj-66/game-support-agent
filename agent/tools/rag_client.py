@@ -74,7 +74,7 @@ class RAGClient:
                 "sources": [],
                 "max_score": 0.0,
                 "error": str(e),
-                "message": "知识服务暂时不可用，建议转人工",
+                "message": "知识服务暂时不可用，请稍后重试",
             }
 
     async def query_knowledge(self, question: str, top_k: int = 10) -> dict:
@@ -86,7 +86,7 @@ class RAGClient:
             return {
                 "has_answer": False,
                 "error": retrieved["error"],
-                "message": retrieved.get("message", "知识服务暂时不可用，建议转人工"),
+                "message": retrieved.get("message", "知识服务暂时不可用，请稍后重试"),
                 "confidence": 0.0,
                 "sources": [],
             }
@@ -117,7 +117,7 @@ class RAGClient:
                 headers=self._headers(),
             )
             if response.status_code == 200:
-                return {"status": "healthy", **response.json()}
+                return {**response.json(), "status": "healthy"}
             return {"status": "degraded"}
         except Exception:
             return {"status": "down"}

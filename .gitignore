@@ -52,14 +52,21 @@ logs/
 *.log
 data/*.db
 data/*.db-*
+data/real_rag_raw/
+data/real_rag_processed/
 *.db-shm
 *.db-wal
 
 # Eval generated reports
 eval/report_*
+eval/results/
 .eval/
+
+# Private interview preparation
+docs/面试项目地图.md
 
 # OS / misc
 *.tmp
 *.bak
 .cache/
+.codex_docker_config/

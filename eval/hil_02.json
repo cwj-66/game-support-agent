@@ -1,17 +1,20 @@
 [
   {
     "id": "hil_02",
-    "category": "human_in_loop",
-    "subcategory": "llm_escalate_payment_dispute",
-    "scenario": "用户充值未到账且强烈要求转人工，验证LLM在充值纠纷场景下主动升等",
+    "suite_version": 2,
     "user_id": "10003",
-    "question": "我账号刚充了648元但没到账！这已经是第三次了，我要找人工客服投诉！马上给我转人工！",
-    "ground_truth": "您好，已为您转接人工客服处理充值未到账的问题，请耐心等待，客服同事会尽快为您处理。",
-    "llm_judge_context": "查询用户（UID 10003）充值状态（充值异常、充值未到账）后转接人工客服",
+    "question": "充值又没到账！我要投诉，马上找人工！",
+    "ground_truth": "应提出转人工选项，等待玩家确认。",
     "expected_tool_sequence": [
-      {"name": "propose_human_escalation", "args": {}}
+      {
+        "name": "propose_human_escalation"
+      }
     ],
+    "category": "handoff",
     "must_escalate": true,
-    "keywords": ["人工", "充值", "未到账", "投诉", "10003"]
+    "forbidden_phrases": [
+      "已经接入人工"
+    ],
+    "fixture": "agent/prompts/system.py:tool-routing"
   }
 ]

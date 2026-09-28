@@ -1,16 +1,16 @@
 [
   {
     "id": "tool_04",
-    "category": "multi_tool",
-    "subcategory": "ticket_check_and_escalate",
-    "scenario": "查工单进度后催单——顺序关键：先check_ticket查状态，再escalate_to_human催单",
-    "user_id": "10004",
-    "question": "我提了个bug反馈工单，处理得怎么样了？还没好的话帮我催一下",
-    "ground_truth": "告知用户工单TK-20260530-2864当前处理中。说明无法直接催单，询问用户是否需要转人工处理。",
-    "llm_judge_context": "先调用check_ticket(user_id=\"10004\")查工单，用户同意转人工后调escalate_to_human，reason中须含工单号TK-20260530-2864",
+    "suite_version": 2,
+    "user_id": "10003",
+    "question": "我的工单 TK-20260520-3001 处理到哪了？",
+    "ground_truth": "工单正在处理中，客服正在与支付渠道核实。",
     "expected_tool_sequence": [
-      {"name": "check_ticket", "args": {"user_id": "10004"}}
+      {
+        "name": "check_ticket"
+      }
     ],
-    "keywords": ["10004", "TK-20260530-2864", "催", "转人工"]
+    "category": "ticket",
+    "fixture": "scripts/mysql/init.sql:support_tickets:TK-20260520-3001"
   }
 ]

@@ -27,12 +27,13 @@ from dotenv import load_dotenv
 load_dotenv(str(PROJECT_ROOT / ".env"))
 
 from agent.graph import get_graph
-from agent.state import create_initial_state
+from agent.state import create_turn_input
+from langchain_core.messages import ToolMessage
 
 
 EVAL_DIR = Path(__file__).parent
 REPORT_PATH = EVAL_DIR / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-JUDGE_FALLBACK_MODEL = os.getenv("JUDGE_FALLBACK_MODEL", "qwen3.6-plus")
+JUDGE_FALLBACK_MODEL = os.getenv("JUDGE_FALLBACK_MODEL", "qwen3.8-max-0902")
 JUDGE_TIMEOUT = 30
 
 
@@ -41,7 +42,7 @@ def load_test_cases(category: Optional[str] = None) -> List[Dict]:
     all_cases = []
     for fpath in sorted(glob(str(EVAL_DIR / "*.json"))):
         fname = Path(fpath).name
-        if fname == "report.csv":
+        if not re.fullmatch(r"(?:tool|rag|hil|mc)_\d+\.json", fname):
             continue
         with open(fpath, encoding="utf-8") as f:
             data = json.load(f)
@@ -57,16 +58,10 @@ def load_test_cases(category: Optional[str] = None) -> List[Dict]:
 
 
 async def run_single(graph, case: Dict) -> Dict:
-    """对单个测试用例执行 graph.invoke()，返回执行结果"""
+    """同一题的各轮共用 checkpoint，并分别记录每轮工具和回复。"""
     case_id = case["id"]
-    question = case["question"]
-    run_id = f"eval_{case_id}_{datetime.now().strftime('%H%M%S%f')}"
-
-    initial_state = create_initial_state(
-        session_id=run_id,
-        user_id=case.get("user_id", "10001"),
-        user_query=question,
-    )
+    user_id = case.get("user_id", "10001")
+    run_id = f"{user_id}_eval_{case_id}_{datetime.now().strftime('%H%M%S%f')}"
 
     config = {
         "configurable": {
@@ -75,50 +70,54 @@ async def run_single(graph, case: Dict) -> Dict:
         }
     }
 
-    try:
-        result = await graph.ainvoke(initial_state, config)
-    except Exception as e:
-        tb = traceback.format_exc()
-        return {
-            "case_id": case_id,
-            "error": f"{type(e).__name__}: {e}",
-            "traceback": tb,
-            "node_trace": [],
-            "messages": [],
-            "final_response": "",
-            "actual_tools": [],
-            "human_offer": None,
-        }
+    turns = case.get("turns") or [case]
+    turn_results = []
+    message_count = trace_count = 0
+    for turn in turns:
+        try:
+            result = await graph.ainvoke(
+                create_turn_input(run_id, user_id, turn["question"]), config
+            )
+        except Exception as e:
+            return {
+                "case_id": case_id,
+                "error": f"{type(e).__name__}: {e}",
+                "traceback": traceback.format_exc(),
+                "turn_results": turn_results,
+            }
 
-    actual_tools = []
-    for msg in result.get("messages", []):
-        tc = getattr(msg, "tool_calls", None)
-        if tc:
-            for t in tc:
-                actual_tools.append({
-                    "name": t.get("name", ""),
-                    "args": t.get("args", {}),
-                })
+        messages = result.get("messages", [])
+        new_messages = messages[message_count:]
+        message_count = len(messages)
+        trace = result.get("node_trace", [])
+        new_trace = trace[trace_count:]
+        trace_count = len(trace)
+        actual_tools = [
+            {"name": tool.get("name", ""), "args": tool.get("args", {})}
+            for msg in new_messages
+            for tool in (getattr(msg, "tool_calls", None) or [])
+        ]
+        turn_results.append({
+            "question": turn["question"],
+            "messages": new_messages,
+            "node_trace": new_trace,
+            "final_response": result.get("final_response") or "",
+            "human_offer": result.get("human_offer"),
+            "actual_tools": actual_tools,
+            "tool_results": [
+                {"name": msg.name, "content": msg.content}
+                for msg in new_messages if isinstance(msg, ToolMessage)
+            ],
+            "sources": result.get("metadata", {}).get("sources") or [],
+        })
 
-    return {
-        "case_id": case_id,
-        "node_trace": result.get("node_trace", []),
-        "messages": result.get("messages", []),
-        "final_response": result.get("final_response") or "",
-        "human_offer": result.get("human_offer"),
-        "actual_tools": actual_tools,
-        "error": None,
-    }
+    return {"case_id": case_id, "turn_results": turn_results, "error": None}
 
 
 def score_tool_usage(case: Dict, result: Dict) -> Tuple[float, str]:
-    """
-    工具调用评分：expected_tool_sequence 的召回率
-    - expected_no_tools = true 时，实际调用了工具则得 0 分
-    - 核心公式：|实际 ∩ 预期| / |预期|
-    """
+    """按顺序匹配预期工具，并对多余调用扣分。"""
     actual_tools = result.get("actual_tools", [])
-    actual_names = {t["name"] for t in actual_tools}
+    actual_names = [t["name"] for t in actual_tools]
 
     if case.get("expected_no_tools"):
         if actual_tools:
@@ -130,24 +129,31 @@ def score_tool_usage(case: Dict, result: Dict) -> Tuple[float, str]:
     if not expected:
         return 1.0, ""
 
-    expected_names = {e["name"] for e in expected}
-    correct = len(expected_names & actual_names)
-    score = correct / len(expected_names)
+    expected_names = [e["name"] for e in expected]
+    matched = 0
+    for name in actual_names:
+        if matched < len(expected_names) and name == expected_names[matched]:
+            matched += 1
+    score = (matched / len(expected_names)) * (matched / max(len(actual_names), 1))
 
     reasons = []
-    if missing := expected_names - actual_names:
-        reasons.append(f"缺少: {sorted(missing)}")
-    if extra := actual_names - expected_names:
-        reasons.append(f"多余: {sorted(extra)}")
+    if matched < len(expected_names):
+        reasons.append(f"预期顺序: {expected_names}，实际: {actual_names}")
+    if len(actual_names) > matched:
+        reasons.append(f"多余调用: {len(actual_names) - matched}")
 
     return score, "; ".join(reasons)
 
 
 def score_escalation(case: Dict, result: Dict) -> Tuple[float, str]:
     """升等评分：must_escalate 为 true 时，调用了 propose_human_escalation 或产生 human_offer 即满分"""
-    if not case.get("must_escalate"):
-        return 1.0, ""
     actual_tools = result.get("actual_tools", [])
+    if not case.get("must_escalate"):
+        if result.get("human_offer") or any(
+            t["name"] == "propose_human_escalation" for t in actual_tools
+        ):
+            return 0.0, "普通问题不应主动转人工"
+        return 1.0, ""
     if any(t["name"] == "propose_human_escalation" for t in actual_tools):
         return 1.0, ""
     if result.get("human_offer"):
@@ -162,19 +168,19 @@ def score_forbidden(case: Dict, result: Dict) -> Tuple[float, str, bool]:
     is_blocked=True 时整题总分强制归零
     """
     forbidden = case.get("forbidden_actions", [])
-    if not forbidden:
-        return 1.0, "", False
-
     actual_tools = result.get("actual_tools", [])
     violated = [t for t in actual_tools if t["name"] in forbidden]
-    if not violated:
-        return 1.0, "", False
+    phrases = [
+        phrase for phrase in case.get("forbidden_phrases", [])
+        if phrase.lower() in result.get("final_response", "").lower()
+    ]
+    if violated or phrases:
+        names = [v["name"] for v in violated]
+        return 0.0, f"触发禁止工具 {names} 或错误表述 {phrases}", True
+    return 1.0, "", False
 
-    names = [v["name"] for v in violated]
-    return 0.0, f"触发了禁止操作: {names}", True
 
-
-def _build_judge_messages(actual_reply: str, ground_truth: str, scenario_context: Optional[str] = None) -> List[Dict]:
+def _build_judge_messages(actual_reply: str, ground_truth: str, scenario_context: Optional[str] = None, evidence: Optional[str] = None) -> List[Dict]:
     """构造 LLM Judge 的 messages"""
     context_block = ""
     if scenario_context:
@@ -182,15 +188,19 @@ def _build_judge_messages(actual_reply: str, ground_truth: str, scenario_context
 {scenario_context}
 
 """
-    prompt = f"""你是一个专业的游戏客服回复质量评估员。你的任务是将实际回复与标准答案对比，评估覆盖程度。
+    evidence_block = (
+        f"本轮内部工具实际返回的账号、工单或知识片段（事实依据）：\n{evidence}\n\n"
+        if evidence is not None else ""
+    )
+    prompt = f"""你是游戏客服回复质量评估员。只使用本题提供的内部工具结果和知识库片段判断事实，不使用互联网或自身常识补充事实。
 
 实际回复:
 {actual_reply}
 
-{context_block}标准答案（应包含的信息点）:
+{context_block}{evidence_block}预设参考答案（仅当实际知识库片段支持时才要求覆盖）:
 {ground_truth}
 
-请仔细对比，判断实际回复覆盖了标准答案中的哪些信息点，遗漏了哪些。
+判断实际回复覆盖的信息。若内部工具结果没有某信息，回复承认无法确认应得到肯定，不得将该信息列为遗漏。回复添加工具结果没有支持的步骤、数值、规则或状态时必须扣分，并在 missing 写明“无依据内容”。
 关键数值（如 10次、1280元、UID 10001）必须准确匹配，数值错误视为未覆盖。
 
 以 JSON 格式输出，不要包含其他内容：
@@ -243,6 +253,39 @@ def _format_ground_truth(ground_truth: Any) -> str:
     return str(ground_truth)
 
 
+def _knowledge_evidence(result: Dict) -> Optional[str]:
+    """只取本轮知识工具实际返回的片段，避免裁判补充外部常识。"""
+    knowledge_results = []
+    for item in result.get("tool_results", []):
+        if item.get("name") != "query_knowledge":
+            continue
+        try:
+            knowledge_results.append(json.loads(item.get("content") or "{}"))
+        except (TypeError, ValueError):
+            continue
+    if not knowledge_results:
+        return None
+    texts = [
+        str(source.get("text") or "")
+        for knowledge in knowledge_results if isinstance(knowledge, dict)
+        for source in knowledge.get("sources") or [] if isinstance(source, dict)
+    ]
+    return "\n".join(texts) if texts else "（没有命中的知识片段）"
+
+
+def _tool_evidence(result: Dict) -> Optional[str]:
+    """给裁判提供当前轮真实工具结果；知识工具只提供原始来源片段。"""
+    parts = []
+    knowledge = _knowledge_evidence(result)
+    if knowledge is not None:
+        parts.append(f"query_knowledge 来源:\n{knowledge}")
+    for item in result.get("tool_results", []):
+        name = item.get("name", "")
+        if name and name != "query_knowledge":
+            parts.append(f"{name}: {item.get('content', '')}")
+    return "\n\n".join(parts) if parts else None
+
+
 async def _try_llm_judge(messages: List[Dict]) -> Optional[Dict]:
     """用现有 DashScope / OpenAI 兼容接口做 Judge"""
     try:
@@ -288,7 +331,7 @@ def _keyword_fallback(actual_reply: str, ground_truth: str) -> Dict:
     return {"covered": covered, "missing": missing, "score": round(score, 2)}
 
 
-async def llm_judge(actual_reply: str, ground_truth_text: str, scenario_context: Optional[str] = None) -> Dict:
+async def llm_judge(actual_reply: str, ground_truth_text: str, scenario_context: Optional[str] = None, evidence: Optional[str] = None) -> Dict:
     """
     调用 LLM 进行内容评估
     链路：DashScope/OpenAI 兼容接口 → 关键词兜底
@@ -296,7 +339,7 @@ async def llm_judge(actual_reply: str, ground_truth_text: str, scenario_context:
     if not actual_reply.strip():
         return {"covered": [], "missing": ["无回复内容可评估"], "score": 0.0}
 
-    messages = _build_judge_messages(actual_reply, ground_truth_text, scenario_context)
+    messages = _build_judge_messages(actual_reply, ground_truth_text, scenario_context, evidence)
 
     result = await _try_llm_judge(messages)
     if result is not None:
@@ -313,7 +356,7 @@ def write_csv(results: List[Dict], path: str):
         "total_score",
         "covered_info", "missing_info",
         "failure_reason",
-        "node_trace", "error",
+        "node_trace", "error", "environment_error",
     ]
 
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
@@ -329,6 +372,11 @@ def write_markdown(results: List[Dict], path: str):
     """输出 Markdown 报告（Cursor/VS Code 原生渲染）"""
     with open(path, "w", encoding="utf-8") as f:
         f.write("# 评估报告\n\n")
+
+        affected = [r["id"] for r in results if r.get("environment_error")]
+        if affected:
+            f.write(f"**环境异常**: {', '.join(affected)} 的工具返回模型额度错误；"
+                    "下方均分包含这些题，不能用于判断模型能力。\n\n")
 
         total = len(results)
         avg_tool = sum(r.get("tool_score", 0) or 0 for r in results) / total
@@ -379,6 +427,8 @@ def write_markdown(results: List[Dict], path: str):
                 f.write(f"**遗漏**: {r['missing_info']}\n\n")
             if r.get("failure_reason"):
                 f.write(f"**失分原因**: {r['failure_reason']}\n\n")
+            if r.get("environment_error"):
+                f.write(f"**环境异常**: {r['environment_error']}\n\n")
             f.write("</details>\n\n")
 
     print(f"MD:  {path}")
@@ -392,6 +442,9 @@ def print_summary(results: List[Dict]):
         return
 
     print(f"\n## 评估报告（共 {total} 题）\n")
+    affected = [r["id"] for r in results if r.get("environment_error")]
+    if affected:
+        print(f"环境异常: {', '.join(affected)}；均分包含受影响题，不宜用于能力判断。\n")
     header = "| ID | 类别 | 工具分 | 升等分 | 禁止分 | 内容分 | 总分 | 失分原因 |"
     sep = "|----|------|--------|--------|--------|--------|------|----------|"
     print(header)
@@ -435,6 +488,72 @@ def print_summary(results: List[Dict]):
             print(f"- **{r['id']}**: {reason[:120]}")
 
 
+async def score_turn(case: Dict, result: Dict, skip_llm: bool) -> Dict:
+    """独立评分一轮，避免多轮题的工具调用相互抵消。"""
+    tool_outputs = "\n".join(str(item.get("content", "")) for item in result.get("tool_results", []))
+    environment_error = (
+        "阿里云模型免费额度已用尽（AllocationQuota.FreeTierOnly）"
+        if "AllocationQuota.FreeTierOnly" in tool_outputs else ""
+    )
+    tool_score, tool_reason = score_tool_usage(case, result)
+    esc_score, esc_reason = score_escalation(case, result)
+    forbid_score, forbid_reason, is_blocked = score_forbidden(case, result)
+
+    if skip_llm:
+        content_result = {"covered": [], "missing": ["已跳过 LLM Judge"], "score": 0.0}
+    else:
+        actual_reply = result.get("final_response", "")
+        if not actual_reply.strip():
+            from langchain_core.messages import AIMessage
+            for msg in reversed(result.get("messages", [])):
+                if isinstance(msg, AIMessage) and msg.content:
+                    actual_reply = str(msg.content)
+                    break
+        content_result = await llm_judge(
+            actual_reply, _format_ground_truth(case.get("ground_truth", "")),
+            case.get("llm_judge_context"),
+            _tool_evidence(result),
+        )
+
+    content_score = content_result.get("score", 0.0)
+    is_human_offer_case = case.get("must_escalate") and (
+        result.get("human_offer") or any(
+            t["name"] == "propose_human_escalation"
+            for t in result.get("actual_tools", [])
+        )
+    )
+    if is_human_offer_case:
+        total_score = tool_score * 0.45 + esc_score * 0.35 + forbid_score * 0.20
+    else:
+        total_score = (
+            tool_score * 0.30 + esc_score * 0.15
+            + forbid_score * 0.25 + content_score * 0.30
+        )
+    if is_blocked:
+        total_score = 0.0
+
+    reasons = [reason for reason in (tool_reason, esc_reason, forbid_reason) if reason]
+    if not is_human_offer_case and not skip_llm:
+        reasons.extend(content_result.get("missing", []))
+    return {
+        "question": case["question"],
+        "tool_score": tool_score,
+        "escalation_score": esc_score,
+        "forbidden_score": forbid_score,
+        "content_score": content_score,
+        "total_score": total_score,
+        "covered_info": "; ".join(content_result.get("covered", [])),
+        "missing_info": "; ".join(content_result.get("missing", [])),
+        "failure_reason": "; ".join(reasons),
+        "actual_tools": result.get("actual_tools", []),
+        "tool_results": result.get("tool_results", []),
+        "environment_error": environment_error,
+        "final_response": result.get("final_response", ""),
+        "sources": result.get("sources", []),
+        "node_trace": result.get("node_trace", []),
+    }
+
+
 async def main():
     parser = argparse.ArgumentParser(description="游戏客服 Agent 批量评估")
     parser.add_argument("--category", choices=["tool", "rag", "hil", "mc"], help="只跑特定类别（按 id 前缀匹配）")
@@ -454,13 +573,24 @@ async def main():
         print("没有找到测试用例，退出")
         return
 
-    print("初始化 LangGraph...")
+    from app.core.config import get_settings
+    from agent.tools.mcp_client import init_mcp_client, close_mcp_client
+    from agent.checkpointer import close_checkpointer
+
+    print("连接 MCP 并初始化 LangGraph...")
+    await init_mcp_client(get_settings().MCP_SERVER_URL.rstrip("/") + "/mcp")
     graph = await get_graph()
+
+    output_base = args.output.replace(".csv", "").replace(".md", "")
+
+    def save_progress(rows: List[Dict]) -> None:
+        with open(output_base + ".json", "w", encoding="utf-8") as file:
+            json.dump(rows, file, ensure_ascii=False, indent=2)
 
     results = []
     for i, case in enumerate(cases):
         cid = case["id"]
-        q_short = case.get("question", "")[:50]
+        q_short = (case.get("question") or case.get("turns", [{}])[0].get("question", ""))[:50]
         print(f"\n[{i + 1}/{len(cases)}] 运行 {cid}: {q_short}...")
 
         result = await run_single(graph, case)
@@ -472,7 +602,7 @@ async def main():
                 "category": case.get("category", ""),
                 "subcategory": case.get("subcategory", ""),
                 "scenario": case.get("scenario", ""),
-                "question": case.get("question", ""),
+                "question": q_short,
                 "tool_score": 0.0,
                 "escalation_score": 0.0,
                 "forbidden_score": 0.0,
@@ -484,96 +614,51 @@ async def main():
                 "node_trace": "[]",
                 "error": result["error"],
             })
+            save_progress(results)
             continue
 
-        tool_score, tool_reason = score_tool_usage(case, result)
-        esc_score, esc_reason = score_escalation(case, result)
-        forbid_score, forbid_reason, is_blocked = score_forbidden(case, result)
-
-        if args.skip_llm:
-            content_result = {"covered": [], "missing": ["已跳过 LLM Judge"], "score": 0.0}
-        else:
-            actual_reply = result.get("final_response", "")
-            if not actual_reply.strip():
-                from langchain_core.messages import AIMessage
-                for msg in reversed(result.get("messages", [])):
-                    if isinstance(msg, AIMessage) and msg.content:
-                        actual_reply = msg.content
-                        break
-            content_result = await llm_judge(actual_reply or "", _format_ground_truth(case.get("ground_truth", "")), case.get("llm_judge_context"))
-
-        content_score = content_result.get("score", 0.0)
-        covered = content_result.get("covered", [])
-        missing = content_result.get("missing", [])
-
-        is_human_offer_case = (
-            case.get("must_escalate")
-            and (
-                result.get("human_offer")
-                or any(t["name"] == "propose_human_escalation" for t in result.get("actual_tools", []))
-            )
-        )
-
-        if is_human_offer_case:
-            total_score = (
-                tool_score * 0.45
-                + esc_score * 0.35
-                + forbid_score * 0.20
-            )
-        else:
-            total_score = (
-                tool_score * 0.30
-                + esc_score * 0.15
-                + forbid_score * 0.25
-                + content_score * 0.30
-            )
-
-        if is_blocked:
-            total_score = 0.0
-
-        reasons = []
-        if tool_reason:
-            reasons.append(f"[工具] {tool_reason}")
-        if esc_reason:
-            reasons.append(f"[升等] {esc_reason}")
-        if forbid_reason:
-            reasons.append(f"[禁止] {forbid_reason}")
-        if is_human_offer_case:
-            reasons.append("[内容] 转人工提议场景，跳过内容评分（权重重新分配）")
-        elif missing:
-            reasons.append(f"[内容] 遗漏: {'; '.join(missing)}")
-        if is_blocked:
-            reasons.append("触发了禁止操作，整题 0 分")
-
-        print(f"  工具={tool_score:.2f} 升等={esc_score:.2f} 禁止={forbid_score:.2f} "
-              f"内容={content_score:.2f} 总分={total_score:.2f}")
-        if reasons:
-            print(f"  原因: {'; '.join(reasons)[:120]}")
-
+        turns = case.get("turns") or [case]
+        details = [
+            await score_turn(turn, turn_result, args.skip_llm)
+            for turn, turn_result in zip(turns, result["turn_results"])
+        ]
+        count = len(details)
+        averages = {
+            key: sum(detail[key] for detail in details) / count
+            for key in ("tool_score", "escalation_score", "forbidden_score",
+                        "content_score", "total_score")
+        }
+        reasons = [
+            f"第{index}轮: {detail['failure_reason']}"
+            for index, detail in enumerate(details, 1) if detail["failure_reason"]
+        ]
+        print(f"  综合={averages['total_score']:.2f}，各轮={[round(d['total_score'], 2) for d in details]}")
         results.append({
             "id": cid,
             "category": case.get("category", ""),
             "subcategory": case.get("subcategory", ""),
-            "scenario": case.get("scenario", ""),
-            "question": case.get("question", ""),
-            "tool_score": tool_score,
-            "escalation_score": esc_score,
-            "forbidden_score": forbid_score,
-            "content_score": content_score,
-            "total_score": total_score,
-            "covered_info": "; ".join(covered),
-            "missing_info": "; ".join(missing),
+            "scenario": case.get("fixture", ""),
+            "question": " / ".join(turn["question"] for turn in turns),
+            **averages,
+            "covered_info": "; ".join(d["covered_info"] for d in details if d["covered_info"]),
+            "missing_info": "; ".join(d["missing_info"] for d in details if d["missing_info"]),
             "failure_reason": "; ".join(reasons),
-            "node_trace": " -> ".join(result.get("node_trace", [])),
+            "node_trace": " / ".join(" -> ".join(d["node_trace"]) for d in details),
             "error": "",
+            "environment_error": "; ".join(
+                sorted({d["environment_error"] for d in details if d["environment_error"]})
+            ),
+            "turn_details": details,
         })
+        save_progress(results)
 
-    output_base = args.output.replace(".csv", "").replace(".md", "")
     fmt = args.report_format
     if fmt in ("csv", "both"):
         write_csv(results, output_base + ".csv")
     if fmt in ("md", "both"):
         write_markdown(results, output_base + ".md")
+    await close_checkpointer()
+    await close_mcp_client()
     print(f"共 {len(results)} 题")
     print_summary(results)
 

@@ -1,7 +1,7 @@
 """pydantic-settings 环境变量配置。"""
 
 from typing import List, Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
@@ -35,14 +35,14 @@ class Settings(BaseSettings):
     )
     OPENAI_API_KEY: Optional[str] = Field(
         default=None,
-        description="OpenAI API Key（兜底通道）",
+        description="可选 OpenAI API Key；当前 LLM 调用仍使用 DashScope 兼容接口",
     )
     REASONING_MODEL_NAME: str = Field(
-        default="qwen-turbo",
+        default="qwen3.8-max",
         description="reasoning 推理节点使用的 LLM 模型",
     )
     GENERATE_MODEL_NAME: str = Field(
-        default="qwen-turbo",
+        default="qwen3.8-flash",
         description="generate 润色节点使用的轻量模型",
     )
     LLM_BASE_URL: Optional[str] = Field(
@@ -125,11 +125,12 @@ class Settings(BaseSettings):
         """本地开发：DEBUG 且未配置 JWT 密钥时跳过玩家鉴权"""
         return self.DEBUG and not self.GAME_JWT_SECRET
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
 
 _settings: Optional[Settings] = None

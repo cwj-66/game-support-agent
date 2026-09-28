@@ -90,7 +90,7 @@ services:
       dockerfile: Dockerfile
     container_name: game-support-rag-api
     ports:
-      - "8000:8000"
+      - "${BIND_HOST:-127.0.0.1}:8000:8000"
     environment:
       - API_KEY=${RAG_API_KEY:-dev-rag-key}
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
@@ -98,6 +98,7 @@ services:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - QDRANT_COLLECTION=enterprise_rag
+      - EMBED_MODEL=${RAG_EMBED_MODEL:-BAAI/bge-m3}
       - DATABASE_URL=mysql+pymysql://rag_user:rag_password@mysql:3306/rag_database
       - DECOMPOSER_ENABLED=${DECOMPOSER_ENABLED:-true}
       - MINERU_MODEL_SOURCE=${MINERU_MODEL_SOURCE:-local}
@@ -105,6 +106,7 @@ services:
     volumes:
       - ${ENTERPRISE_RAG_DIR:-../enterprise-rag}/data:/app/data
       - ${ENTERPRISE_RAG_DIR:-../enterprise-rag}/storage:/app/storage
+      - ${ENTERPRISE_RAG_DIR:-../enterprise-rag}/models:/app/models:ro
       - rag-hf-cache:/app/.cache/huggingface
     depends_on:
       db-init:
@@ -135,12 +137,12 @@ services:
     environment:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8001
-      - RAG_SERVICE_URL=http://rag-api:8000
+      - RAG_SERVICE_URL=${MCP_RAG_SERVICE_URL:-http://rag-api:8000}
       - RAG_API_KEY=${RAG_API_KEY:-dev-rag-key}
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.5-plus}
-      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen-turbo}
+      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-max}
+      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen3.8-flash}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - MYSQL_HOST=mysql
       - MYSQL_PORT=3306
@@ -174,18 +176,19 @@ services:
       dockerfile: Dockerfile
     container_name: game-support-agent-api
     ports:
-      - "8002:8002"
+      - "${BIND_HOST:-127.0.0.1}:8002:8002"
     environment:
       - HOST=0.0.0.0
       - PORT=8002
-      - RAG_SERVICE_URL=http://rag-api:8000
+      - RAG_SERVICE_URL=${AGENT_RAG_SERVICE_URL:-http://rag-api:8000}
       - RAG_API_KEY=${RAG_API_KEY:-dev-rag-key}
       - MCP_SERVER_URL=http://mcp-server:8001
       - REDIS_URL=redis://redis:6379/0
+      - DB_PATH=/app/data/game_support_docker.db
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.5-plus}
-      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen-turbo}
+      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-max}
+      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen3.8-flash}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - REVIEWER_API_KEY=${REVIEWER_API_KEY:-dev}
       - GAME_JWT_SECRET=${GAME_JWT_SECRET:-your-game-jwt-secret-change-me}
@@ -215,7 +218,7 @@ services:
       dockerfile: Dockerfile
     container_name: game-support-player-chat
     ports:
-      - "${FRONTEND_PORT:-5175}:80"
+      - "${BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-5175}:80"
     depends_on:
       - agent-api
     restart: unless-stopped

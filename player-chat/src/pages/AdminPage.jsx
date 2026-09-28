@@ -66,6 +66,13 @@ function AdminPage() {
     return () => clearInterval(t)
   }, [])
 
+  const closeDrawer = useCallback(() => {
+    setDrawerOpen(false)
+    setCurrentTask(null)
+    setReply('')
+    setHistory([])
+  }, [])
+
   const fetchPending = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
@@ -92,7 +99,7 @@ function AdminPage() {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [drawerOpen])
+  }, [drawerOpen, closeDrawer])
 
   const fetchHistory = useCallback(async (sessionId, silent = false) => {
     if (!silent) setHistoryLoading(true)
@@ -120,14 +127,15 @@ function AdminPage() {
     return () => clearInterval(timer)
   }, [fetchPending])
 
+  const currentSessionId = currentTask?.session_id
   useEffect(() => {
-    if (!drawerOpen || !currentTask) return undefined
-    fetchHistory(currentTask.session_id, true)
+    if (!drawerOpen || !currentSessionId) return undefined
+    fetchHistory(currentSessionId, true)
     const timer = setInterval(() => {
-      fetchHistory(currentTask.session_id, true)
+      fetchHistory(currentSessionId, true)
     }, HISTORY_POLL_INTERVAL)
     return () => clearInterval(timer)
-  }, [drawerOpen, currentTask?.session_id, fetchHistory])
+  }, [drawerOpen, currentSessionId, fetchHistory])
 
   useEffect(() => {
     historyEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -149,13 +157,6 @@ function AdminPage() {
     }
 
     fetchHistory(record.session_id)
-  }
-
-  const closeDrawer = () => {
-    setDrawerOpen(false)
-    setCurrentTask(null)
-    setReply('')
-    setHistory([])
   }
 
   /** 发送消息（继续接待） */

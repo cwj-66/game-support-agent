@@ -1,17 +1,23 @@
 [
   {
     "id": "tool_08",
-    "category": "multi_tool",
-    "subcategory": "ban_check_and_auto_ticket",
-    "scenario": "用户一句话内同时要求查封禁状态和创建工单——验证 LLM 能连续查账号并提议建单，不重复调用 propose_ticket",
+    "suite_version": 2,
     "user_id": "10005",
-    "question": "帮我查一下我的账号是不是被封了，封了的话帮我创个工单",
-    "ground_truth": "告知用户（UID 10005）账号已被封禁，原因是恶意退款（违反用户协议第5.1条）。然后调用 propose_ticket 提议创建申诉工单，告知用户可通过确认按钮建单。",
-    "llm_judge_context": "先调 lookup_account 查状态，再调 propose_ticket（issue_type=account_ban）提议建单；propose_ticket 只调一次，不重复。",
+    "question": "先查我是否被封；如果封了，请帮我提交申诉工单。",
+    "ground_truth": "账号因恶意退款被封禁；创建申诉工单须由玩家点击确认。",
     "expected_tool_sequence": [
-      {"name": "lookup_account", "args": {}},
-      {"name": "propose_ticket", "args": {}}
+      {
+        "name": "lookup_account"
+      },
+      {
+        "name": "propose_ticket"
+      }
     ],
-    "keywords": ["10005", "封禁", "恶意退款", "申诉", "工单"]
+    "category": "ticket",
+    "fixture": "scripts/mysql/init.sql:game_players:10005",
+    "forbidden_phrases": [
+      "工单已创建",
+      "已经解封"
+    ]
   }
 ]

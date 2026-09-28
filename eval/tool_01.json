@@ -1,15 +1,16 @@
 [
   {
     "id": "tool_01",
-    "category": "single_tool",
-    "subcategory": "account_lookup_normal",
-    "scenario": "用户查询自己账号状态，验证正常账号查询流程",
+    "suite_version": 2,
     "user_id": "10001",
-    "question": "帮我查一下我的充值情况",
-    "ground_truth": "充值总额为1,280元（UID 10001）。",
+    "question": "查一下我账号累计充值了多少钱。",
+    "ground_truth": "当前账号累计充值 1280 元。",
     "expected_tool_sequence": [
-      {"name": "lookup_account", "args": {"user_id": "10001"}}
+      {
+        "name": "lookup_account"
+      }
     ],
-    "keywords": ["10001", "1280", "正常", "充值"]
+    "category": "account",
+    "fixture": "scripts/mysql/init.sql:game_players:10001"
   }
 ]

@@ -12,6 +12,18 @@ from ..tools import get_all_tools, simplify_tool_context
 MAX_REACT_ROUNDS = 5
 
 
+def _tool_result_text(result: Any) -> str:
+    """将 MCP 文本内容块还原为工具返回的 JSON 文本。"""
+    if isinstance(result, list):
+        texts = [item["text"] for item in result
+                 if isinstance(item, dict) and item.get("type") == "text"]
+        if texts:
+            return "\n".join(texts)
+    if isinstance(result, dict) or isinstance(result, list):
+        return json.dumps(result, ensure_ascii=False)
+    return str(result)
+
+
 async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     """执行 AIMessage 中的 tool_calls，写回 ToolMessage。"""
     messages = state.get("messages", [])
@@ -139,7 +151,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
 
         try:
             result = await tool.ainvoke(tool_args)
-            result_str = str(result)
+            result_str = _tool_result_text(result)
             record["status"] = "completed"
             record["output"] = result_str
 
@@ -161,9 +173,13 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
         except Exception as e:
             record["status"] = "failed"
             record["error"] = str(e)
+            error_result = {"has_answer": False, "error": str(e)}
+            if tool_name == "query_knowledge":
+                metadata["knowledge_result"] = error_result
+                metadata["sources"] = []
             tool_messages.append(ToolMessage(
                 content=json.dumps(
-                    {"has_answer": False, "error": str(e)},
+                    error_result,
                     ensure_ascii=False,
                 ),
                 name=tool_name,

@@ -1,8 +1,9 @@
 """LLM 推理节点：绑定工具自主决策。"""
 
 from typing import Dict, Any
+import re
 
-from langchain_core.messages import SystemMessage, AIMessage
+from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from ..state import AgentState
@@ -14,7 +15,7 @@ from app.core.config import get_settings
 def _build_llm_from_settings() -> ChatOpenAI:
     """从配置创建 LLM 实例"""
     settings = get_settings()
-    model_name = settings.REASONING_MODEL_NAME or "qwen-turbo"
+    model_name = settings.REASONING_MODEL_NAME or "qwen3.8-max"
     base_url = settings.LLM_BASE_URL or "https://dashscope.aliyuncs.com/compatible-mode/v1"
     extra_body = (
         {"thinking": {"type": "disabled"}}
@@ -35,6 +36,27 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     user_id = state.get("user_id", "")
     history = state.get("messages", [])
     metadata = state.get("metadata", {})
+
+    # 知识查询失败或无命中是本轮的终点，不能把服务故障当作自动建单理由。
+    last_message = history[-1] if history else None
+    knowledge = metadata.get("knowledge_result")
+    explicit_offer = re.search(r"(?:建|创建|提交).{0,4}工单|转人工|人工客服", state.get("user_query", ""))
+    if (isinstance(last_message, ToolMessage)
+            and last_message.name == "query_knowledge"
+            and isinstance(knowledge, dict)
+            and not knowledge.get("has_answer")
+            and not explicit_offer):
+        content = (
+            "抱歉，知识库查询暂时失败，我现在无法核实答案。请稍后重试。"
+            if knowledge.get("error") else
+            "当前知识库没有找到足够依据，我无法确认这个问题的答案。"
+        )
+        metadata["knowledge_terminal"] = content
+        return {
+            "messages": [AIMessage(content=content)],
+            "metadata": metadata,
+            "node_trace": ["reasoning"],
+        }
 
     system_prompt = GAME_SUPPORT_SYSTEM_PROMPT
     if user_id:

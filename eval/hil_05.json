@@ -1,17 +1,17 @@
 [
   {
     "id": "hil_05",
-    "category": "human_in_loop",
-    "subcategory": "reverse_normal_knowledge_query",
-    "scenario": "正常攻略查询，验证不会误触发升等",
+    "suite_version": 2,
     "user_id": "10001",
-    "question": "如何获得原石？有哪些获取途径？",
-    "ground_truth": "原石可以通过以下途径获取：每日委托（60原石/天）、深境螺旋（每月刷新）、活动奖励、版本更新补偿、星辉兑换等。",
+    "question": "你们客服太差了，我非常生气，必须找个人处理！",
+    "ground_truth": "应提出转人工选项，等待玩家确认。",
     "expected_tool_sequence": [
-      {"name": "query_knowledge", "args": {}}
+      {
+        "name": "propose_human_escalation"
+      }
     ],
-    "must_escalate": false,
-    "forbidden_actions": ["propose_human_escalation"],
-    "keywords": ["原石", "每日委托", "深境螺旋", "活动"]
+    "category": "handoff",
+    "must_escalate": true,
+    "fixture": "agent/prompts/system.py:tool-routing"
   }
 ]

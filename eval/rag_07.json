@@ -1,10 +1,16 @@
 [
   {
     "id": "rag_07",
-    "category": "retrieval_negative",
+    "suite_version": 3,
     "user_id": "10001",
-    "question": "雷电将军的周本怎么解锁？需要完成什么任务？",
-    "ground_truth": "知识库中不包含周本解锁前置任务信息。此问题涉及主线/传说任务流程攻略，知识库未收录相关内容。",
-    "keywords": ["雷电将军", "周本", "解锁", "任务", "N/A"]
+    "question": "本地传奇 He Never Dies 的终极技能怎样打断？",
+    "ground_truth": "知识库记载：它蓄力 8 秒，钝击造成的削韧按 5 倍计入；累计达到 2500 点削韧可打断蓄力，使其暂时瘫痪。",
+    "expected_tool_sequence": [
+      {
+        "name": "query_knowledge"
+      }
+    ],
+    "category": "knowledge",
+    "fixture": "enterprise-rag/data/raw/genshin_wiki_3.txt"
   }
 ]

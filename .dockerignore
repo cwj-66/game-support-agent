@@ -6,6 +6,8 @@ __pycache__/
 .idea/
 .claude/
 .env
+.cache/
+.codex_docker_config/
 node_modules/
 player-chat/node_modules/
 player-chat/dist/
@@ -20,3 +22,6 @@ eval/report_*
 htmlcov/
 data/*.db
 data/*.db-*
+data/real_rag_raw/
+data/real_rag_processed/
+eval/results/

@@ -1,18 +1,19 @@
 [
   {
     "id": "hil_07",
-    "category": "human_in_loop",
-    "subcategory": "reverse_normal_ban_appeal",
-    "scenario": "用户查询封禁后创建申诉工单，属于后台异步处理场景，不应触发升人工",
-    "user_id": "10005",
-    "question": "我的账号被封了，我要申诉",
-    "ground_truth": "经查询，您的账号（UID 10005）因恶意退款已被封禁。请问是否需要为您创建申诉工单？",
-    "llm_judge_context": "待用户确认后创建申诉工单。不应调用 propose_human_escalation 升人工。",
+    "suite_version": 2,
+    "user_id": "10004",
+    "question": "只想查一下我的充值总额。",
+    "ground_truth": "当前账号累计充值 648 元，无需转人工。",
     "expected_tool_sequence": [
-      {"name": "lookup_account", "args": {"user_id": "10005"}}
+      {
+        "name": "lookup_account"
+      }
     ],
-    "must_escalate": false,
-    "forbidden_actions": ["propose_human_escalation"],
-    "keywords": ["10005", "封禁", "申诉", "工单"]
+    "category": "no_handoff",
+    "forbidden_actions": [
+      "propose_human_escalation"
+    ],
+    "fixture": "scripts/mysql/init.sql:game_players:10004"
   }
 ]

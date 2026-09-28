@@ -1,17 +1,16 @@
 [
   {
     "id": "rag_05",
-    "category": "retrieval_semantic",
-    "user_id": "10001",
-    "question": "这个叫「祂从未死去」的世界BOSS，它的大招是什么机制？怎么打断？",
-    "ground_truth": "终极技能名为「Giant Undying Collision」（巨力不灭冲撞）。Boss会蓄力8秒，期间全抗性提升310%，钝击攻击造成5倍削韧伤害。累计造成2500点削韧伤害即可打断蓄力并使Boss瘫痪；若未能打断，Boss会冲刺3次，每次造成300%攻击力的物理伤害。",
-    "keywords": [
-      "He Never Dies",
-      "Ultimate Technique",
-      "Giant Undying Collision",
-      "poise",
-      "2500",
-      "瘫痪"
-    ]
+    "suite_version": 3,
+    "user_id": "10003",
+    "question": "账号被封禁后，如果不认可处罚，应该怎么申诉？",
+    "ground_truth": "知识库要求使用被封禁账号给官方客服邮箱发邮件，标题注明【封禁申诉】和游戏 UID；工作人员核实底层数据后答复。",
+    "expected_tool_sequence": [
+      {
+        "name": "query_knowledge"
+      }
+    ],
+    "category": "knowledge",
+    "fixture": "enterprise-rag/data/raw/原神客服标准化知识库.pdf#Q5"
   }
 ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -78,6 +79,19 @@ def _max_score(sources: list[dict[str, Any]], fallback: float = 0.0) -> float:
     return float(fallback or 0.0)
 
 
+def _quote_matches_source(quote: str, sources: list[dict[str, Any]]) -> bool:
+    """PDF 换行和兼容字形不应使原文引用校验失败。"""
+    if not quote.strip():
+        return False
+    normalized_quote = re.sub(r"\s+", "", unicodedata.normalize("NFKC", quote))
+    return any(
+        normalized_quote in re.sub(
+            r"\s+", "", unicodedata.normalize("NFKC", str(src.get("text") or ""))
+        )
+        for src in sources
+    )
+
+
 async def answer_from_sources(
     question: str,
     sources: list[dict[str, Any]],
@@ -111,17 +125,18 @@ async def answer_from_sources(
     ])
     raw_text = (result.content or "") if result else ""
     source_quote, answer = _parse_quote_answer(str(raw_text))
+    quote_supported = _quote_matches_source(source_quote, sources)
 
     raw_confidence = _max_score(sources, max_score)
-    if not source_quote:
+    if not quote_supported:
         confidence = min(raw_confidence, 0.49)
     else:
         confidence = min(raw_confidence, 1.0)
 
     return {
-        "has_answer": bool(answer) and confidence >= 0.3,
-        "answer": answer,
+        "has_answer": bool(answer) and quote_supported and confidence >= 0.3,
+        "answer": answer if quote_supported else "",
         "confidence": confidence,
-        "source_quote": source_quote,
+        "source_quote": source_quote if quote_supported else "",
         "sources": sources,
     }

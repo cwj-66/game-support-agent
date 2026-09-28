@@ -37,6 +37,9 @@ def create_turn_input(
         "session_id": session_id,
         "ticket_id": ticket_id,
         "tool_calls": [],
+        "ticket_offer": None,
+        "human_offer": None,
+        "final_response": None,
         "metadata": {},
     }
 

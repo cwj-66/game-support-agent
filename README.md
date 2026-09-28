@@ -78,9 +78,11 @@ cp .env.example .env
 
 `.env` 至少配置：
 
-- `DASHSCOPE_API_KEY`（或 `OPENAI_API_KEY` 兜底）
+- `DASHSCOPE_API_KEY`（Agent 模型调用使用）
 - `REASONING_MODEL_NAME` / `GENERATE_MODEL_NAME`
 - `GAME_JWT_SECRET`（本地可用 `python scripts/generate_game_token.py --user-id 10001` 测 JWT）
+
+`.env.example` 默认使用 `qwen3.8-max`（推理）、`qwen3.8-flash`（润色）和 `qwen3.8-max-0902`（评测裁判）；实际运行以本机 `.env` 或容器环境变量为准。当前 `get_chat_model()` 使用 DashScope 兼容接口及 `DASHSCOPE_API_KEY`，只填写 `OPENAI_API_KEY` 并不会自动切换模型提供方。
 
 ### 2. 启动基础依赖
 
@@ -88,6 +90,22 @@ cp .env.example .env
 # MySQL（工单/账号）+ Redis（待接待队列）
 docker compose up -d mysql redis
 ```
+
+本地联调知识查询时，还需启动 RAG 服务：可在另一终端运行 `python -m uvicorn mock_rag.main:app --port 8000` 使用桩数据。真实检索使用同级目录的 `enterprise-rag`，并启动 Qdrant；不能把桩数据测评分数算作真实知识库成绩。
+
+若真实 `enterprise-rag` 在宿主机运行，再于本仓库执行 `docker compose up -d qdrant db-init`，然后在 `enterprise-rag` 目录配置其虚拟环境、API 密钥、MySQL 与 Qdrant 地址以及 BGE-M3 模型路径。以下为 Windows PowerShell 示例，模型目录须按实际位置修改：
+
+```powershell
+$env:DATABASE_URL='mysql+pymysql://rag_user:rag_password@127.0.0.1:3307/rag_database'
+$env:QDRANT_HOST='127.0.0.1'
+$env:EMBED_MODEL='C:/path/to/bge-m3'
+$env:PYTHONIOENCODING='utf-8'
+$env:OMP_NUM_THREADS='4'
+$env:MKL_NUM_THREADS='4'
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+确认 `http://127.0.0.1:8000/health` 的 `index_ready=true` 后，在本仓库 `.env` 设置 `RAG_API_KEY` 与 `enterprise-rag/.env` 的 `API_KEY` 一致，并将 `MCP_RAG_SERVICE_URL`、`AGENT_RAG_SERVICE_URL` 设置为 `http://host.docker.internal:8000`；再运行 `docker compose up -d --no-deps mcp-server agent-api`。`index_ready=true` 只说明索引已加载；正式评测前仍需确认所需文档已入库。若沿用既有测试索引，请记录文档版本和实际解析方式。
 
 ### 3. 启动后端
 
@@ -125,11 +143,13 @@ pytest
 pytest tests/test_rag_client.py -v
 ```
 
+`pytest` 是离线单元测试，无需启动服务或消耗模型额度。27 道 Agent 评测题在 `eval/tool_*.json`、`rag_*.json`、`hil_*.json` 和 `mc_*.json` 中；多轮题按同一会话逐轮执行。账号/工单题依据 `scripts/mysql/init.sql`，知识题依据已入库的 `enterprise-rag` 文档，因此正式运行前需启动 MySQL、真实 RAG 和 MCP Server。`eval/evaluate.py` 会调用真实 Agent 和模型；`--skip-llm` 只跳过裁判模型，不跳过被测 Agent 的模型调用。评测报告写入指定路径的 `.csv`、`.md` 和 `.json`（含逐轮详情）。
+
 ## 启动流程速查（本地开发）
 
 | 组件 | 命令 | 端口 |
 |------|------|------|
-| 全栈（含真实 RAG） | `docker compose up -d --build` | 5175 / 8000 / 8002 |
+| 全栈（含真实 RAG） | 两仓库同级，按下方“Docker 联合部署”准备后执行 `docker compose up -d --build` | 5175 / 8000 / 8002 |
 | MySQL / Redis / Qdrant | 已包含在全栈中；也可 `up -d mysql redis qdrant` | 3307 / 6380 / 6333（仅 127.0.0.1） |
 | RAG 桩（不跑 Docker RAG） | `python -m uvicorn mock_rag.main:app --port 8000` | 8000 |
 | MCP Server | `python mcp_server.py` | 8001 |
@@ -188,12 +208,12 @@ GET   /api/v1/human/history/{session_id}
 ### 三段式评分
 
 1. **硬评分**：`tool_score` / `escalation_score` / `forbidden_score`
-2. **内容 LLM-as-Judge**：`qwen-max` 评估信息点覆盖（无 LLM 时降级关键词匹配）
+2. **内容 LLM-as-Judge**：默认 `qwen3.8-max-0902`（可用 `JUDGE_FALLBACK_MODEL` 覆盖）评估信息点覆盖；调用失败时降级关键词匹配
 3. **综合评分**：正常场景 工具30% + 升等15% + 禁止25% + 内容30%；升等场景 工具45% + 升等35% + 禁止20%
 
-报告输出 CSV + Markdown，含逐题明细和低分分析。
+报告输出 CSV + Markdown + JSON，含逐题明细和低分分析；生成报告保留在本机，默认不提交到仓库。评分基于测试账号的数据库记录和已入库的内部知识文档，不使用网上答案补齐参考答案。分数仅代表这 27 道题及当次服务、模型和知识库状态，不等于生产环境准确率。最近一次实测摘要见 [评测记录](docs/evaluation.md)。
 
-## Docker 一键部署
+## Docker 联合部署（本地开发）
 
 一条 compose 拉起客服 + 知识库：**一份 MySQL（两个库）+ Redis + Qdrant**。  
 两个 Git 仓库需同级目录：
@@ -203,14 +223,14 @@ PythonProject/game-support-agent   ← 在此执行 compose
 PythonProject/enterprise-rag
 ```
 
-内存建议 **≥ 4GB**。不要同时 `up` `enterprise-rag/docker-compose.yml`。
+需要 Docker Engine、同级的 `enterprise-rag` 仓库及足够的模型运行内存。首次构建会下载镜像与 Python 依赖，可能耗时较长；本机曾因依赖下载与内存限制未能验证完整的一键构建，因此建议先确认基础组件与 RAG 健康检查。不要同时 `up` `enterprise-rag/docker-compose.yml`。
 
 ### 1. 准备环境变量
 
 ```bash
 cp .env.example .env
 # 至少填写：DASHSCOPE_API_KEY、GAME_JWT_SECRET、REVIEWER_API_KEY
-# RAG_API_KEY 与知识库 API_KEY 一致，默认 dev-rag-key
+# RAG_API_KEY 与知识库 API_KEY 一致；示例密钥只用于本地开发
 ```
 
 RAG 不在 `../enterprise-rag` 时，在 `.env` 设置 `ENTERPRISE_RAG_DIR`（正斜杠路径）。
@@ -220,6 +240,8 @@ RAG 不在 `../enterprise-rag` 时，在 `.env` 设置 `ENTERPRISE_RAG_DIR`（�
 ```bash
 docker compose up -d --build
 ```
+
+修改 `.env` 中的模型名后，需重新创建 `agent-api` 和 `mcp-server` 容器；仅修改文件不会更新正在运行的容器。Docker API 使用独立的 `data/game_support_docker.db` 保存会话，避免与本机评测进程共用 SQLite 文件。
 
 查看状态：
 
@@ -244,7 +266,7 @@ docker compose down
 | Redis | `127.0.0.1:6380` | 仅本机；待接待队列 |
 | Qdrant | `127.0.0.1:6333` | 仅本机；向量 |
 
-VPS 把前端放到 80 端口：`.env` 设 `FRONTEND_PORT=80`。
+Compose 默认将前端及两个 API 绑定在 `127.0.0.1`，使用示例数据库密码与开发密钥，只适合本地开发。真实对外部署须先更换 MySQL、JWT、RAG 与客服密钥，并通过受控反向代理提供访问；需要监听外部网卡时再显式设置 `BIND_HOST`。
 
 本地生成玩家 JWT：
 
@@ -312,8 +334,8 @@ X-API-Key: <optional>
 | 层面 | 选型 |
 |------|------|
 | AI 编排 | LangGraph / langchain-core / langchain-openai |
-| LLM | DashScope（qwen3.5-plus 推理 + qwen-turbo 润色），OpenAI 兜底 |
-| 评测 | LLM-as-Judge via qwen-max |
+| LLM | DashScope 兼容接口；模型由 `REASONING_MODEL_NAME` / `GENERATE_MODEL_NAME` 配置 |
+| 评测 | LLM-as-Judge 默认 `qwen3.8-max-0902` |
 | API 服务 | FastAPI + Pydantic |
 | 客户端 | React + Vite + Ant Design + rich CLI |
 | 持久化 | SQLite（Agent 状态）+ Redis（待接待队列）+ MySQL（工单/账号 + 知识库元数据）+ Qdrant（向量） |

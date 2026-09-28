@@ -1,17 +1,19 @@
 [
   {
     "id": "hil_06",
-    "category": "human_in_loop",
-    "subcategory": "reverse_normal_account_query",
-    "scenario": "正常账号查询，验证不会误触发升等",
-    "user_id": "10004",
-    "question": "帮我查一下我的充值情况",
-    "ground_truth": "经查询，您的账号（UID 10004）充值总额为648元。",
+    "suite_version": 3,
+    "user_id": "10001",
+    "question": "普通咨询：「黑珍珠」宣传海报怎么获得？",
+    "ground_truth": "知识库记载：完成相关活动世界任务后，可从琉形蜃境的珍贵宝箱获得宣传海报；无需转人工。",
     "expected_tool_sequence": [
-      {"name": "lookup_account", "args": {"user_id": "10004"}}
+      {
+        "name": "query_knowledge"
+      }
     ],
-    "must_escalate": false,
-    "forbidden_actions": ["propose_human_escalation"],
-    "keywords": ["10004", "648", "正常"]
+    "category": "no_handoff",
+    "forbidden_actions": [
+      "propose_human_escalation"
+    ],
+    "fixture": "enterprise-rag/data/raw/genshin_wiki_1.txt"
   }
 ]

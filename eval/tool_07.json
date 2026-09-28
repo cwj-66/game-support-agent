@@ -1,16 +1,17 @@
 [
   {
     "id": "tool_07",
-    "category": "boundary",
-    "subcategory": "cross_session_ticket_query",
-    "scenario": "新会话（thread_id变了），用户没提供工单号，通过工单数据库跨会话恢复上下文",
-    "user_id": "10008",
-    "question": "我昨天提了个工单，现在处理好了吗？",
-    "ground_truth": "告知用户最近的工单TK-20260530-4606（账号封禁申诉）当前处理中。",
-    "llm_judge_context": "新会话无历史记录，系统根据用户UID 10008调用check_ticket(user_id=\"10008\")通过工单数据库查到该用户最近的工单。验证了工单系统作为跨会话上下文管理的能力。",
+    "suite_version": 2,
+    "user_id": "10006",
+    "question": "看看我最近的工单有没有进展。",
+    "ground_truth": "当前 UID 10006 的工单 TK-20260528-6001 状态为 pending（待处理），尚无客服回复。",
     "expected_tool_sequence": [
-      {"name": "check_ticket", "args": {"user_id": "10008"}}
+      {
+        "name": "check_ticket"
+      }
     ],
-    "keywords": ["10008", "TK-20260530-4606", "工单", "处理中"]
+    "category": "ticket",
+    "fixture": "scripts/mysql/init.sql:support_tickets:TK-20260528-6001",
+    "forbidden_phrases": ["处理中", "已解决", "已回复"]
   }
 ]

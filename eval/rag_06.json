@@ -1,10 +1,16 @@
 [
   {
     "id": "rag_06",
-    "category": "retrieval_negative",
+    "suite_version": 3,
     "user_id": "10001",
-    "question": "芙宁娜的圣遗物用黄金剧团还是花海甘露之光？哪个更好？",
-    "ground_truth": "知识库中不包含角色圣遗物配装推荐信息。此问题涉及版本角色培养攻略，知识库未收录相关内容，应避免猜测配装方案。",
-    "keywords": ["芙宁娜", "圣遗物", "黄金剧团", "花海甘露之光", "N/A"]
+    "question": "下个尚未公布的版本兑换码是什么？",
+    "ground_truth": "当前入库知识没有未公布兑换码，应该明确无法确认，不得编造兑换码。",
+    "expected_tool_sequence": [
+      {
+        "name": "query_knowledge"
+      }
+    ],
+    "category": "knowledge_gap",
+    "fixture": "enterprise-rag:knowledge-gap"
   }
 ]

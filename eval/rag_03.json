@@ -1,15 +1,16 @@
 [
   {
     "id": "rag_03",
-    "category": "retrieval_semantic",
+    "suite_version": 3,
     "user_id": "10001",
-    "question": "回声之子部族住在纳塔的什么地方？他们是哪个部落的？",
-    "ground_truth": "回声之子（Children of Echoes）位于纳塔的Tequemecan Valley，是Nanatzcayan部落的家园。",
-    "keywords": [
-      "Children of Echoes",
-      "Tequemecan Valley",
-      "Natlan",
-      "Nanatzcayan"
-    ]
+    "question": "旧手机号已经注销，怎样换绑米哈游账号？",
+    "ground_truth": "知识库要求使用账号申诉，提交实名信息和常用设备信息，由人工解绑。",
+    "expected_tool_sequence": [
+      {
+        "name": "query_knowledge"
+      }
+    ],
+    "category": "knowledge",
+    "fixture": "enterprise-rag/data/raw/原神客服标准化知识库.pdf#Q3"
   }
 ]

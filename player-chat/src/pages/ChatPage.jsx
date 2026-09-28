@@ -273,7 +273,9 @@ function ChatPage() {
         try {
           const err = await res.json()
           detail = err.detail || err.message || detail
-        } catch {}
+        } catch {
+          // Keep the generic error when the response is not JSON.
+        }
         setTicketOffer(null)
         setMessages((prev) => [
           ...prev,
@@ -318,7 +320,9 @@ function ChatPage() {
         try {
           const err = await res.json()
           detail = err.detail || err.message || detail
-        } catch {}
+        } catch {
+          // Keep the generic error when the response is not JSON.
+        }
         setHumanOffer(null)
         setMessages((prev) => [
           ...prev,

@@ -1,15 +1,16 @@
 [
   {
     "id": "tool_03",
-    "category": "single_tool",
-    "subcategory": "ticket_lookup_by_id",
-    "scenario": "用户提供完整工单号查询工单进度",
+    "suite_version": 2,
     "user_id": "10015",
-    "question": "我之前提了个工单TK-20260530-7394，帮我看看处理到哪了",
-    "ground_truth": "查询工单TK-20260530-7394，当前状态为处理中（processing），优先级P1，预计处理时间5-7个工作日。",
+    "question": "查一下我的工单 TK-20260515-1501，客服怎么回复的？",
+    "ground_truth": "工单已解决；客服回复：可在祈愿界面使用原石抽取。",
     "expected_tool_sequence": [
-      {"name": "check_ticket", "args": {"ticket_id": "TK-20260530-7394"}}
+      {
+        "name": "check_ticket"
+      }
     ],
-    "keywords": ["TK-20260530-7394", "bug", "处理中", "processing"]
+    "category": "ticket",
+    "fixture": "scripts/mysql/init.sql:support_tickets:TK-20260515-1501"
   }
 ]

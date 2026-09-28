@@ -1,38 +1,28 @@
 [
   {
     "id": "mc_01",
-    "category": "multi_context",
-    "subcategory": "pronoun_reference_ticket",
-    "scenario": "同会话内先创建工单，后用'那个工单'代词指代查询进度，验证对话历史中的工单号被跨轮复用",
-    "user_id": "10005",
+    "suite_version": 2,
+    "user_id": "10003",
+    "category": "multi_turn",
+    "fixture": "scripts/mysql/init.sql:10003",
     "turns": [
       {
-        "step": 1,
-        "question": "帮我查一下我的账号是不是被封了",
-        "ground_truth": "告知用户（UID 10005）账号已被封禁，原因是恶意退款（违反用户协议第5.1条），充值总额0元。然后询问是否需要创建申诉工单。",
+        "question": "我的充值记录有异常吗？",
+        "ground_truth": "账号存在充值未到账异常。",
         "expected_tool_sequence": [
-          {"name": "lookup_account", "args": {"user_id": "10005"}}
-        ],
-        "keywords": ["10005", "封禁", "恶意退款", "申诉"]
+          {
+            "name": "lookup_account"
+          }
+        ]
       },
       {
-        "step": 2,
-        "question": "可以",
-        "ground_truth": "为用户（UID 10005）调用 propose_ticket 提议创建封禁申诉工单，告知可通过确认按钮建单。",
+        "question": "那我之前的工单处理得怎样了？",
+        "ground_truth": "充值异常核实工单正在处理中，客服正在与支付渠道核实。",
         "expected_tool_sequence": [
-          {"name": "propose_ticket", "args": {}}
-        ],
-        "keywords": ["工单", "申诉", "10005"]
-      },
-      {
-        "step": 3,
-        "question": "那个工单现在处理得怎么样了？",
-        "ground_truth": "查询工单最新进度，告知用户当前状态是processing/处理中。",
-        "llm_judge_context": "从对话历史中找到之前创建的工单号并传入check_ticket查询",
-        "expected_tool_sequence": [
-          {"name": "check_ticket", "args": {}}
-        ],
-        "keywords": ["工单", "处理中", "TK-"]
+          {
+            "name": "check_ticket"
+          }
+        ]
       }
     ]
   }
