@@ -1,344 +1,183 @@
-# Game Support Agent
+# Game Support Agent · 游戏客服智能体
 
-基于 LangGraph 的游戏客服 Agent，实现 LLM 自主处理 + RAG 知识库 + 人工接待的完整闭环；含 27 条评测用例、LLM-as-Judge 评估框架。
+基于 LangGraph 的游戏客服应用，将知识问答、账号查询、工单确认与人工接待串成完整业务流程。项目包含 Python 后端、React 玩家端与客服工作台，以及覆盖工具调用和多轮对话的评测框架。
 
-## 项目架构
+**技术栈：** Python · LangGraph · MCP · FastAPI · React · MySQL · Redis · SQLite · RAG
 
-```
-game-support-agent/
-├── agent/                          # LangGraph 核心编排
-│   ├── graph.py                    # 主图：4 个节点 + 1 条条件边（ReAct 循环）
-│   ├── state.py                    # AgentState 定义（TypedDict）
-│   ├── checkpointer.py             # AsyncSqliteSaver 状态持久化
-│   ├── nodes/
-│   │   ├── reasoning.py            # LLM 推理节点（bind_tools 自主决策）
-│   │   ├── tool_exec.py            # 通用工具分发器
-│   │   ├── generate.py             # 客服回复润色生成
-│   │   └── finish.py               # 结束节点
-│   ├── tools/
-│   │   ├── __init__.py             # get_all_tools()：MCP 工具 + 本地提议工具
-│   │   ├── mcp_client.py           # MCP Client（连接 mcp_server.py）
-│   │   ├── rag_client.py           # RAG HTTP 客户端（仅检索）
-│   │   ├── knowledge_answer.py     # 基于检索片段生成本侧答案
-│   │   ├── propose_ticket.py       # 提议创建工单（前端确认后落库）
-│   │   └── propose_human_escalation.py  # 提议转人工（前端确认后进入接待）
-│   └── prompts/
-│       └── system.py               # 系统提示词
-├── app/                            # FastAPI 服务层
-│   ├── main.py                     # 入口（CORS、路由、生命周期）
-│   ├── api/
-│   │   ├── deps.py                 # JWT / Reviewer Token 鉴权
-│   │   └── v1/
-│   │       ├── chat.py             # 对话 / 流式 / 工单&人工确认
-│   │       ├── human.py            # 人工接待接口
-│   │       └── ticket.py           # 工单 CRUD
-│   ├── core/                       # 配置、LLM、MySQL、异常
-│   ├── repositories/               # MySQL CRUD
-│   ├── services/                   # 工单、账号、接待队列、会话摘要等
-│   └── models/
-├── eval/                           # 评测框架（27 题，四类别）
-├── player-chat/                    # 统一前端：玩家端 + 客服工作台 /admin
-├── admin-ui/                       # 已并入 player-chat，勿单独启动
-├── client/
-│   └── cli.py                      # 终端 CLI（rich）
-├── mock_rag/                       # 本地演示用 RAG 桩服务（可选）
-├── scripts/
-│   ├── generate_game_token.py      # 本地测试 JWT 生成
-│   └── mysql/                      # Docker MySQL：客服库 + 共享的 rag_database
-├── tests/
-├── data/                           # 运行时数据目录（*.db 不入库）
-├── mcp_server.py                   # MCP Server（query_knowledge / lookup_account / check_ticket）
-├── .env.example
-├── requirements.txt
-└── docker-compose.yml              # mysql + redis + qdrant + rag-api + mcp + agent-api + player-chat
+[核心实现](#核心实现与设计取舍) · [系统架构](#系统架构) · [评测结果](#测试与评测) · [快速开始](#快速开始) · [开发文档](docs/development.md)
+
+## 业务场景与功能
+
+玩家咨询往往同时涉及游戏规则、账号状态和需要人工处理的异常。这个项目围绕“查询信息 → 提供回复 → 确认处理方式 → 工单或人工跟进”组织客服流程。
+
+| 场景 | 已实现的处理方式 | 代码入口 |
+| --- | --- | --- |
+| 知识问答 | 检索知识片段，在 Agent 侧生成回答并校验引用片段 | [RAG 客户端](agent/tools/rag_client.py) |
+| 账号与工单查询 | 通过 MCP 工具查询业务数据，供 Agent 组织回复 | [MCP Server](mcp_server.py) |
+| 工单创建 | Agent 提出建议，玩家确认后由 API 创建工单 | [确认接口](app/api/v1/chat.py) |
+| 人工接待 | 玩家确认转人工，客服在工作台查看上下文并连续回复 | [人工接待接口](app/api/v1/human.py) |
+| 多轮对话 | 使用 LangGraph checkpoint 保存会话状态 | [状态持久化](agent/checkpointer.py) |
+| 双端交互 | 玩家聊天、工单页面与客服接待、工单管理共用一个前端 | [前端路由](player-chat/src/App.jsx) |
+
+### 可体验的业务流程
+
+下面是流程示意；具体回复由模型、知识库和当前账号数据决定。
+
+```mermaid
+flowchart LR
+    A[玩家提出问题] --> B[Agent 查询知识或业务数据]
+    B --> C[生成客服回复]
+    C --> D[问题已解决]
+    C --> E[提议创建工单或转人工]
+    E --> F{玩家确认}
+    F -->|创建工单| G[写入 MySQL 并跟进]
+    F -->|转人工| H[进入待接待队列]
+    H --> I[客服查看上下文并回复]
 ```
 
-### LangGraph 流程（简图）
+本地启动后，可依次体验：在 `/accounts` 选择测试账号 → 询问账号状态或“原石如何获得” → 请求创建工单并确认 → 请求转人工，在 `/admin` 接待。知识演示可使用仓库内的模拟 RAG；它不代表真实检索效果。
 
-```
-START → reasoning ─┬─ 有 tool_calls → tool_exec → reasoning（ReAct 循环）
-                   └─ 无 tool_calls  → generate → finish → END
+## 核心实现与设计取舍
+
+### 1. 用显式状态图组织工具调用
+
+将一次 Agent 执行拆分为 `reasoning → tool_exec → reasoning` 的工具循环，以及 `generate → finish` 的回复阶段。推理节点决定是否调用工具，工具执行节点统一处理结果，最终生成节点负责客服表达。
+
+这样可以分别检查路由、工具结果和回复生成，并通过 `node_trace` 观察执行路径。代价是多阶段模型调用增加时延与成本，最终回复还需要独立检查事实一致性。
+
+**实现：** [状态图](agent/graph.py) · [工具分发](agent/nodes/tool_exec.py) · [Agent 测试](tests/test_agent.py)
+
+### 2. 将操作提议与业务执行分开
+
+创建工单和转人工先产生 `ticket_offer` / `human_offer`，由前端展示确认选项；玩家确认后，后端接口执行对应动作。模型负责提出处理建议，业务接口负责落库或进入接待流程。
+
+这一设计让用户明确选择后续动作，也让确认接口可以单独测试。额外的确认步骤会增加一次交互，需要保持提示文案清晰。
+
+**实现：** [工单提议](agent/tools/propose_ticket.py) · [确认接口](app/api/v1/chat.py) · [工单确认测试](tests/test_chat_ticket_confirm.py)
+
+### 3. 分离知识检索与客服答案生成
+
+外部 RAG 通过 `/api/v1/retrieve` 返回片段、来源和分数；Agent 侧根据片段生成回答，并检查引用文本是否能在来源中匹配。检索错误或无结果会以结构化结果返回，供后续流程处理。
+
+这一接口边界支持替换检索服务，也允许使用模拟服务进行联调。引用匹配只是局部约束，不能证明整段回复都正确；后续润色仍可能引入超出证据的信息，因此评测也检查最终内容。
+
+**实现：** [检索客户端](agent/tools/rag_client.py) · [依据片段作答](agent/tools/knowledge_answer.py) · [RAG 测试](tests/test_rag_client.py)
+
+### 4. 按用途组织会话与业务数据
+
+SQLite 保存 LangGraph 会话状态，Redis 管理待接待队列，MySQL 保存账号和工单。人工回复写入会话 checkpoint，让接待过程可以沿用已有上下文。
+
+这种划分便于本地运行和分别管理数据生命周期；当前方案仍需进一步验证多实例部署、并发接待及跨存储一致性。
+
+**实现：** [checkpoint](agent/checkpointer.py) · [待接待队列](app/services/pending_store.py) · [人工会话](app/services/human_chat.py)
+
+## 系统架构
+
+```mermaid
+flowchart TB
+    UI[React 玩家端与客服工作台] --> API[FastAPI / JWT 与客服 Token]
+    API --> Graph[LangGraph 客服 Agent]
+    Graph --> LLM[DashScope 模型接口]
+    Graph --> MCP[MCP Server]
+    MCP --> RAG[外部 RAG 检索服务]
+    MCP --> MySQL[(MySQL 账号与工单)]
+    API --> MySQL
+    Graph --> SQLite[(SQLite 会话 checkpoint)]
+    API --> SQLite
+    API --> Redis[(Redis 待接待队列)]
 ```
 
-- **工单创建**：Agent 调用 `propose_ticket` → 前端弹窗确认 → `POST /chat/ticket-confirm` 落库
-- **转人工**：Agent 调用 `propose_human_escalation` → 前端确认 → `POST /chat/human-confirm` → 客服在 `/admin` 接待
+外部真实检索由配套 [enterprise-rag](https://github.com/cwj-66/enterprise-rag) 仓库提供；本仓库负责客服编排、业务工具、交互界面和 Agent 评测。完整目录结构、接口契约及联合部署见[开发文档](docs/development.md)。
+
+## 测试与评测
+
+采用两层验证：离线单元测试检查状态、接口和评分逻辑；Agent 评测连接实际模型与服务，检查工具行为、人工升级和最终回答。
+
+| 评测类别 | 用例数 | 关注点 |
+| --- | ---: | --- |
+| 知识问答 | 7 | 检索内容、回答依据与降级行为 |
+| 工具调用 | 8 | 账号与工单查询、工具选择 |
+| 人工接待 | 7 | 升级触发与禁止操作 |
+| 多轮上下文 | 5 | 同一会话中的信息延续 |
+| **合计** | **27** | **规则评分 + LLM-as-Judge** |
+
+仓库记录的 **2026-09-27** 评测使用真实 `enterprise-rag`、已入库内部文档及测试账号数据，结果如下。
+
+| 指标 | 记录结果 |
+| --- | ---: |
+| 综合均分 | **96.44 / 100** |
+| 工具调用 / 升级 / 禁止操作 | 各 100 / 100 |
+| 内容均分 | 84.81 / 100 |
+| 运行错误 / 环境错误 | 0 / 0 |
+
+**结果分析：** 行为评分高于内容评分。已有记录发现，部分回复加入了资料不支持的状态、承诺或步骤，另有确认按钮提示不够明确的问题。后续重点是约束最终回复的事实依据，并扩充失败场景和回归用例。
+
+以上为自建小规模测试集在特定环境下的历史结果，不能解释为生产准确率。原始报告含账号和知识库文本，未公开；公开题目与评分代码可供检查，完整复现还需要对应知识库与环境。现有摘要未完整记录当次模型配置，不以当前默认配置反推历史配置。
+
+**证据入口：** [评测记录](docs/evaluation.md) · [题目与评分代码](eval/) · [单元测试](tests/) · [CI 配置](.github/workflows/ci.yml)
+
+CI 配置覆盖 Python 测试及前端 lint、build，执行状态可在仓库的 [Actions](https://github.com/cwj-66/game-support-agent/actions) 页面查看。
 
 ## 快速开始
 
-### 1. 环境配置
+推荐先体验 **本地 Agent + 模拟 RAG**：仅 MySQL 和 Redis 使用 Docker，Python 服务和前端在本机运行。前置环境为 Python 3.11、Node.js 22.12+（22.x）及 Docker Compose；需准备可用的 DashScope API Key，模型调用会产生费用。
+
+### 1. 安装与配置
 
 ```bash
+git clone https://github.com/cwj-66/game-support-agent.git
+cd game-support-agent
 python -m venv venv
-# Windows: venv\Scripts\activate
-# macOS/Linux: source venv/bin/activate
-
-pip install -r requirements.txt
-cp .env.example .env
 ```
 
-`.env` 至少配置：
-
-- `DASHSCOPE_API_KEY`（Agent 模型调用使用）
-- `REASONING_MODEL_NAME` / `GENERATE_MODEL_NAME`
-- `GAME_JWT_SECRET`（本地可用 `python scripts/generate_game_token.py --user-id 10001` 测 JWT）
-
-`.env.example` 默认使用 `qwen3.8-max`（推理）、`qwen3.8-flash`（润色）和 `qwen3.8-max-0902`（评测裁判）；实际运行以本机 `.env` 或容器环境变量为准。当前 `get_chat_model()` 使用 DashScope 兼容接口及 `DASHSCOPE_API_KEY`，只填写 `OPENAI_API_KEY` 并不会自动切换模型提供方。
-
-### 2. 启动基础依赖
+激活虚拟环境：Windows PowerShell 使用 `./venv/Scripts/Activate.ps1`；macOS / Linux 使用 `source venv/bin/activate`。随后执行：
 
 ```bash
-# MySQL（工单/账号）+ Redis（待接待队列）
+python -m pip install -r requirements.txt
+```
+
+复制 `.env.example` 为 `.env`，填写 `DASHSCOPE_API_KEY` 和 `GAME_JWT_SECRET`，确认 `REASONING_MODEL_NAME` / `GENERATE_MODEL_NAME` 在账户中可用。其余配置可使用本地演示默认值；当前模型实现使用 DashScope，单独填写 `OPENAI_API_KEY` 不会切换提供方。
+
+### 2. 启动服务
+
+```bash
 docker compose up -d mysql redis
 ```
 
-本地联调知识查询时，还需启动 RAG 服务：可在另一终端运行 `python -m uvicorn mock_rag.main:app --port 8000` 使用桩数据。真实检索使用同级目录的 `enterprise-rag`，并启动 Qdrant；不能把桩数据测评分数算作真实知识库成绩。
+等待 MySQL 就绪。在三个终端中分别进入仓库根目录、激活虚拟环境，按顺序启动下列服务：
 
-若真实 `enterprise-rag` 在宿主机运行，再于本仓库执行 `docker compose up -d qdrant db-init`，然后在 `enterprise-rag` 目录配置其虚拟环境、API 密钥、MySQL 与 Qdrant 地址以及 BGE-M3 模型路径。以下为 Windows PowerShell 示例，模型目录须按实际位置修改：
+| 终端 | 命令 | 用途 |
+| --- | --- | --- |
+| 1 | `python -m uvicorn mock_rag.main:app --port 8000` | 模拟知识检索 |
+| 2 | `python mcp_server.py` | MCP 工具服务 |
+| 3 | `python -m app.main` | 客服 API |
 
-```powershell
-$env:DATABASE_URL='mysql+pymysql://rag_user:rag_password@127.0.0.1:3307/rag_database'
-$env:QDRANT_HOST='127.0.0.1'
-$env:EMBED_MODEL='C:/path/to/bge-m3'
-$env:PYTHONIOENCODING='utf-8'
-$env:OMP_NUM_THREADS='4'
-$env:MKL_NUM_THREADS='4'
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-确认 `http://127.0.0.1:8000/health` 的 `index_ready=true` 后，在本仓库 `.env` 设置 `RAG_API_KEY` 与 `enterprise-rag/.env` 的 `API_KEY` 一致，并将 `MCP_RAG_SERVICE_URL`、`AGENT_RAG_SERVICE_URL` 设置为 `http://host.docker.internal:8000`；再运行 `docker compose up -d --no-deps mcp-server agent-api`。`index_ready=true` 只说明索引已加载；正式评测前仍需确认所需文档已入库。若沿用既有测试索引，请记录文档版本和实际解析方式。
-
-### 3. 启动后端
+在第四个终端启动前端：
 
 ```bash
-# 终端 1：MCP Server（必须，主服务启动时会连接）
-python mcp_server.py
-
-# 终端 2：FastAPI 后端
-python -m app.main
+cd player-chat
+npm ci
+npm run dev
 ```
 
-默认 `http://127.0.0.1:8002`，API 文档 `http://127.0.0.1:8002/docs`
+### 3. 体验与验证
 
-### 4. 启动前端
+- 玩家入口：<http://localhost:5173/accounts>，选择测试账号后进入聊天，页面自动获取玩家 JWT。
+- 客服工作台：<http://localhost:5173/admin>。本地默认客服 Token 为 `dev`；若更改后端 `REVIEWER_API_KEY`，需同步设置前端 `VITE_REVIEWER_TOKEN` 并重启 Vite。
+- API 文档：<http://localhost:8002/docs>。
+- 离线测试：在仓库根目录运行 `python -m pytest -q`。
 
-```bash
-cd player-chat && npm install && npm run dev   # http://localhost:5173
-```
+真实知识检索、Docker 联合部署及模型评测步骤见[开发与部署指南](docs/development.md)。模拟 RAG 仅提供演示片段，不用于复现上面的真实知识库评测结果。
 
-| 路径 | 说明 |
-|------|------|
-| http://localhost:5173 | 玩家端 |
-| http://localhost:5173/admin | 客服工作台 |
+## 当前边界与改进方向
 
-前端通过 Vite proxy 转发到 `http://localhost:8002`。
+- **运行阶段：** 面向本地开发和演示。完整 Docker 联合构建在既有记录中尚未验证通过，不能视为已完成生产部署。
+- **接入方式：** 测试账号登录和前端客服 Token 是演示方案；真实业务接入需要完善身份、权限与密钥管理。
+- **回答质量：** 引用校验仍不足以保证最终回复事实一致性，需增加无依据承诺等失败场景的回归验证。
+- **性能证据：** 当前未提供并发、P95 延迟和单次请求成本的实测数据，后续需建立相应基线。
 
-### 5. 运行评测 / 测试
+## 文档与反馈
 
-```bash
-python eval/evaluate.py
-python eval/evaluate.py --category tool
-python eval/evaluate.py --skip-llm
-
-pytest
-pytest tests/test_rag_client.py -v
-```
-
-`pytest` 是离线单元测试，无需启动服务或消耗模型额度。27 道 Agent 评测题在 `eval/tool_*.json`、`rag_*.json`、`hil_*.json` 和 `mc_*.json` 中；多轮题按同一会话逐轮执行。账号/工单题依据 `scripts/mysql/init.sql`，知识题依据已入库的 `enterprise-rag` 文档，因此正式运行前需启动 MySQL、真实 RAG 和 MCP Server。`eval/evaluate.py` 会调用真实 Agent 和模型；`--skip-llm` 只跳过裁判模型，不跳过被测 Agent 的模型调用。评测报告写入指定路径的 `.csv`、`.md` 和 `.json`（含逐轮详情）。
-
-## 启动流程速查（本地开发）
-
-| 组件 | 命令 | 端口 |
-|------|------|------|
-| 全栈（含真实 RAG） | 两仓库同级，按下方“Docker 联合部署”准备后执行 `docker compose up -d --build` | 5175 / 8000 / 8002 |
-| MySQL / Redis / Qdrant | 已包含在全栈中；也可 `up -d mysql redis qdrant` | 3307 / 6380 / 6333（仅 127.0.0.1） |
-| RAG 桩（不跑 Docker RAG） | `python -m uvicorn mock_rag.main:app --port 8000` | 8000 |
-| MCP Server | `python mcp_server.py` | 8001 |
-| FastAPI 后端 | `python -m app.main` | 8002 |
-| 前端 | `cd player-chat && npm run dev` | 5173（`/admin` 为客服工作台） |
-| 终端 CLI | `python client/cli.py --session test_001 "问题"` | — |
-
-## API 接口
-
-### 对话（玩家 JWT：`Authorization: Bearer <token>`）
-
-```http
-POST /api/v1/chat/send              # 发送消息
-POST /api/v1/chat/stream            # SSE 流式回复
-GET  /api/v1/chat/history/{session_id}
-GET  /api/v1/chat/reply/{session_id}   # 轮询 Agent 回复
-POST /api/v1/chat/ticket-confirm    # 确认创建工单
-POST /api/v1/chat/human-confirm     # 确认转人工
-```
-
-### 工单
-
-```http
-POST   /api/v1/ticket/create
-POST   /api/v1/ticket/submit        # 提交工单并触发 Agent
-GET    /api/v1/ticket/list
-GET    /api/v1/ticket/{ticket_id}
-PATCH  /api/v1/ticket/{ticket_id}
-GET    /api/v1/ticket/stats
-```
-
-### 人工接待（客服 Token：`X-Reviewer-Token`）
-
-```http
-GET   /api/v1/human/pending
-POST  /api/v1/human/join/{session_id}
-POST  /api/v1/human/review/{session_id}   # reply + action: continue|close
-GET   /api/v1/human/status/{session_id}
-GET   /api/v1/human/history/{session_id}
-```
-
-客服通过 `continue` 多轮对话，`close` 结束接待。消息直接写入 LangGraph checkpoint。
-
-## Eval Framework
-
-### 评测类别
-
-| 类别 | 题数 | 说明 |
-|------|------|------|
-| RAG 检索 | 7 | 知识库查询准确性、置信度阈值、降级行为 |
-| 工具调用 | 8 | 账号查询、工单创建/查询、工具选择合规性 |
-| 人工接待 | 7 | 转人工触发、禁止操作拦截 |
-| 多轮上下文 | 5 | 跨轮对话摘要、上下文连贯性 |
-| **合计** | **27** | |
-
-### 三段式评分
-
-1. **硬评分**：`tool_score` / `escalation_score` / `forbidden_score`
-2. **内容 LLM-as-Judge**：默认 `qwen3.8-max-0902`（可用 `JUDGE_FALLBACK_MODEL` 覆盖）评估信息点覆盖；调用失败时降级关键词匹配
-3. **综合评分**：正常场景 工具30% + 升等15% + 禁止25% + 内容30%；升等场景 工具45% + 升等35% + 禁止20%
-
-报告输出 CSV + Markdown + JSON，含逐题明细和低分分析；生成报告保留在本机，默认不提交到仓库。评分基于测试账号的数据库记录和已入库的内部知识文档，不使用网上答案补齐参考答案。分数仅代表这 27 道题及当次服务、模型和知识库状态，不等于生产环境准确率。最近一次实测摘要见 [评测记录](docs/evaluation.md)。
-
-## Docker 联合部署（本地开发）
-
-一条 compose 拉起客服 + 知识库：**一份 MySQL（两个库）+ Redis + Qdrant**。  
-两个 Git 仓库需同级目录：
-
-```
-PythonProject/game-support-agent   ← 在此执行 compose
-PythonProject/enterprise-rag
-```
-
-需要 Docker Engine、同级的 `enterprise-rag` 仓库及足够的模型运行内存。首次构建会下载镜像与 Python 依赖，可能耗时较长；本机曾因依赖下载与内存限制未能验证完整的一键构建，因此建议先确认基础组件与 RAG 健康检查。不要同时 `up` `enterprise-rag/docker-compose.yml`。
-
-### 1. 准备环境变量
-
-```bash
-cp .env.example .env
-# 至少填写：DASHSCOPE_API_KEY、GAME_JWT_SECRET、REVIEWER_API_KEY
-# RAG_API_KEY 与知识库 API_KEY 一致；示例密钥只用于本地开发
-```
-
-RAG 不在 `../enterprise-rag` 时，在 `.env` 设置 `ENTERPRISE_RAG_DIR`（正斜杠路径）。
-
-### 2. 启动全部服务
-
-```bash
-docker compose up -d --build
-```
-
-修改 `.env` 中的模型名后，需重新创建 `agent-api` 和 `mcp-server` 容器；仅修改文件不会更新正在运行的容器。Docker API 使用独立的 `data/game_support_docker.db` 保存会话，避免与本机评测进程共用 SQLite 文件。
-
-查看状态：
-
-```bash
-docker compose ps
-```
-
-停止：
-
-```bash
-docker compose down
-```
-
-### 3. 访问地址
-
-| 入口 | 地址 | 说明 |
-|------|------|------|
-| 前端 | http://localhost:5175 | 玩家聊天；`/admin` 为客服工作台 |
-| Agent API | http://localhost:8002/docs | FastAPI Swagger |
-| RAG UI | http://localhost:8000/ui | 上传/检索知识库（`X-API-Key` = `RAG_API_KEY`） |
-| MySQL | `127.0.0.1:3307` | 仅本机；库 `game_support` + `rag_database` |
-| Redis | `127.0.0.1:6380` | 仅本机；待接待队列 |
-| Qdrant | `127.0.0.1:6333` | 仅本机；向量 |
-
-Compose 默认将前端及两个 API 绑定在 `127.0.0.1`，使用示例数据库密码与开发密钥，只适合本地开发。真实对外部署须先更换 MySQL、JWT、RAG 与客服密钥，并通过受控反向代理提供访问；需要监听外部网卡时再显式设置 `BIND_HOST`。
-
-本地生成玩家 JWT：
-
-```bash
-python scripts/generate_game_token.py --user-id 10001
-```
-
-### 4. 常用命令
-
-```bash
-# 只重启后端
-docker compose up -d --build agent-api mcp-server
-
-# 查看后端 / RAG 日志
-docker compose logs -f agent-api rag-api
-
-# 若 player-chat 未起来
-docker compose up -d player-chat
-```
-
-## RAG 知识库
-
-`docker compose up` 会构建并启动同级仓库 `enterprise-rag` 的 `rag-api`。Agent 通过 MCP 工具 `query_knowledge`：
-
-1. HTTP 调用知识库 **`POST /api/v1/retrieve`** 只取片段  
-2. 在本仓库用 LLM（`agent/tools/knowledge_answer.py`）依据片段作答  
-3. 再经图中 `generate` 节点润色成客服话术
-
-不跑 Docker、只测 Agent 时可用内置桩：
-
-```bash
-python -m uvicorn mock_rag.main:app --port 8000
-```
-
-### 外部 RAG HTTP 契约
-
-自有知识库需实现**仅检索**接口（不要依赖 RAG 侧生成答案）：
-
-```http
-GET /health
-→ 200 {"status": "ok"}
-
-POST /api/v1/retrieve
-Content-Type: application/json
-X-API-Key: <optional>
-
-{"question": "如何获得原石？", "top_k": 10}
-
-→ 200
-{
-  "query": "如何获得原石？",
-  "sources": [
-    {"text": "片段全文", "source": "faq.md", "page": null, "score": 0.92}
-  ],
-  "max_score": 0.92,
-  "retrieve_mode": "vector",
-  "elapsed_ms": 120
-}
-```
-
-客户端见 `agent/tools/rag_client.py`；不可用时会安全降级（建议转人工），不阻断主服务启动。
-
-## 技术栈
-
-| 层面 | 选型 |
-|------|------|
-| AI 编排 | LangGraph / langchain-core / langchain-openai |
-| LLM | DashScope 兼容接口；模型由 `REASONING_MODEL_NAME` / `GENERATE_MODEL_NAME` 配置 |
-| 评测 | LLM-as-Judge 默认 `qwen3.8-max-0902` |
-| API 服务 | FastAPI + Pydantic |
-| 客户端 | React + Vite + Ant Design + rich CLI |
-| 持久化 | SQLite（Agent 状态）+ Redis（待接待队列）+ MySQL（工单/账号 + 知识库元数据）+ Qdrant（向量） |
-| 外部集成 | MCP Server（streamable_http）+ enterprise-rag HTTP（/api/v1/retrieve） |
-| 鉴权 | 游戏 JWT（玩家）+ Reviewer Token（客服） |
-| 测试 | pytest |
+- [开发与部署指南](docs/development.md)：目录结构、环境配置、API、RAG 契约与 Docker 联合部署。
+- [评测记录](docs/evaluation.md)：历史测试条件、结果与问题分析。
+- [问题反馈](https://github.com/cwj-66/game-support-agent/issues)：请附复现步骤、运行方式及脱敏后的错误信息。
