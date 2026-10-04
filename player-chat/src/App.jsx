@@ -8,11 +8,13 @@ import TicketsPage from './pages/TicketsPage'
 import AccountsPage from './pages/AccountsPage'
 import AdminPage from './pages/AdminPage'
 import AdminTickets from './pages/AdminTickets'
+import RouteMotion from './RouteMotion'
 
 function App() {
   return (
     <AccessGate><AuthProvider>
       <BrowserRouter>
+        <RouteMotion />
         <Routes>
           <Route path="/" element={<PortfolioPage />} />
           <Route path="/admin" element={<AdminLayout />}>
