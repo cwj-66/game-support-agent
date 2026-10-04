@@ -1,0 +1,25 @@
+/* Shared navigation: readable labels and comfortable mouse/touch targets. */
+.site-header{height:auto;min-height:100px;padding:20px 0;flex-wrap:wrap}
+.header-right,.header-nav{gap:12px;flex-wrap:wrap}
+.site-header .header-nav{display:flex}
+.site-header .header-nav a,.site-header .text-button,body .breadcrumb{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:48px;padding:12px 18px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#1e3a8a;font-size:17px;font-weight:650;line-height:1.4;white-space:normal;text-align:center}
+.header-nav a:hover,.text-button:hover,.breadcrumb:hover{background:#eff6ff;border-color:#93b4fb;color:#1d4ed8}
+.logout-button{background:#f8fafc;color:#475569}
+.shell:has([data-presentation]) .logout-button{font-size:17px!important;padding:12px 18px!important}
+.shell:has([data-presentation]) .home-return{font-size:17px!important;padding:12px 18px!important}
+.access-badge{font-size:14px;gap:8px;padding:8px}.access-badge .dot{width:8px;height:8px;background:#16a34a}
+.breadcrumb{margin:24px 0 10px;justify-content:flex-start}
+.button,.filters button,.chapter-tab,.spacious-experience .chapter-tab,.password-field button,.dialog-heading button{font-size:17px;min-height:48px;line-height:1.5}
+.button{padding:13px 21px}.filters button,.chapter-tab,.spacious-experience .chapter-tab{padding:11px 16px}
+.nav-arrow small,.deck-controls .nav-arrow small{font-size:15px}
+.spacious-experience .enlarge,.enlarge,#original-image-link{font-size:16px;min-height:44px;padding:10px 15px;align-items:center}
+.login-card .button{font-size:18px;min-height:54px}.password-field input{font-size:18px;min-height:54px}
+.password-field input::placeholder,.input-label,.login-error,.login-card>p{font-size:16px}
+.password-field button{min-width:48px;font-size:15px}.password-field input{padding-right:72px}
+.agent-bottom>.button,.case-bottom>.button,.reflection-end>.button{font-size:18px;min-height:54px}
+@media(max-width:700px){
+ .site-header{gap:18px;padding:20px 0}.site-header .header-right{width:100%;justify-content:flex-start;gap:10px}
+ .header-nav{gap:10px;flex-wrap:wrap}.site-header .header-nav a,.site-header .text-button,body .breadcrumb{font-size:16px;min-height:48px;padding:11px 14px}
+ .access-badge{display:none}.button,.filters button,.chapter-tab,.spacious-experience .chapter-tab{font-size:16px;min-height:48px}
+ .filters{flex-wrap:wrap}.site-header .brand small{display:none}.agent-bottom>.button,.case-bottom>.button{max-width:100%;white-space:normal}
+}
