@@ -60,7 +60,7 @@ function PlayerLayout() {
               </NavLink>
             </nav>
           </div>
-          <Link to="/" className="workbench-entry portfolio-entry"><AppstoreOutlined aria-hidden="true" /> 作品集</Link>
+          <a href="/" className="workbench-entry portfolio-entry"><AppstoreOutlined aria-hidden="true" /> 作品集首页</a>
           <Link to="/admin" target="_blank" rel="noopener noreferrer" className="workbench-entry customer-workbench-entry">
             <CustomerServiceOutlined aria-hidden="true" /> 客服工作台
           </Link>
