@@ -1,0 +1,3 @@
+FROM game-support-agent-mcp-server:latest
+COPY app /app/app
+COPY agent /app/agent

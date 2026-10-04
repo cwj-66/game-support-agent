@@ -1,3 +1,4 @@
+import { demoFetch } from '../access'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button, Card, Empty, Segmented, Spin, message } from 'antd'
@@ -34,7 +35,7 @@ function AccountsPage() {
     const load = async () => {
       setLoading(true)
       try {
-        const res = await fetch(`${API_BASE}/demo/players`)
+        const res = await demoFetch(`${API_BASE}/demo/players`)
         if (!res.ok) {
           message.error(
             res.status === 503
@@ -65,7 +66,7 @@ function AccountsPage() {
   const handleLogin = async (uid) => {
     setLoggingUid(uid)
     try {
-      const res = await fetch(`${API_BASE}/demo/login`, {
+      const res = await demoFetch(`${API_BASE}/demo/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uid }),
@@ -84,7 +85,7 @@ function AccountsPage() {
       const data = await res.json()
       login(data.token, data.player)
       message.success(`已登录 ${data.player.nickname}（${data.player.uid}）`)
-      const to = location.state?.from?.pathname || '/'
+      const to = location.state?.from?.pathname || '/chat'
       navigate(to, { replace: true })
     } catch {
       message.error('网络异常，请检查后端是否启动')
@@ -96,9 +97,10 @@ function AccountsPage() {
   return (
     <div className="accounts-page">
       <div className="accounts-hero">
-        <h2>选择测试账号</h2>
+        <div className="panel-eyebrow">GAME SUPPORT / INTERACTIVE DEMO</div>
+        <h2>选一个角色，开始体验。</h2>
         <p>
-          点选下方账号即可进入玩家端。不同账号覆盖正常、封禁、充值异常等状态，方便验证客服流程。
+          五个账号，五种真实客服场景。选择账号后，可从左侧示例开始，体验知识问答、账号核实与工单跟进。
         </p>
         <Segmented
           value={statusFilter}
@@ -169,7 +171,7 @@ function AccountsPage() {
                     disabled={Boolean(loggingUid) && loggingUid !== p.uid}
                     onClick={() => handleLogin(p.uid)}
                   >
-                    {selected ? '当前账号，重新进入' : '选择并登录'}
+                    {selected ? '当前账号，重新进入' : '开始对话 ↗'}
                   </Button>
                 </Card>
               )

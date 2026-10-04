@@ -2,6 +2,7 @@
 
 import logging
 import os
+import asyncio
 from typing import Optional
 
 import aiosqlite
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 _conn: Optional[aiosqlite.Connection] = None
 _saver: Optional[AsyncSqliteSaver] = None
+_init_lock = asyncio.Lock()
 
 
 def _get_db_path() -> str:
@@ -24,6 +26,11 @@ def _get_db_path() -> str:
 
 
 async def init_checkpointer() -> None:
+    async with _init_lock:
+        await _init_checkpointer_unlocked()
+
+
+async def _init_checkpointer_unlocked() -> None:
     """初始化 AsyncSqliteSaver（应用启动时调用）"""
     global _conn, _saver
     if _saver is not None:
@@ -34,11 +41,17 @@ async def init_checkpointer() -> None:
     if parent:
         os.makedirs(parent, exist_ok=True)
 
+    from app.core.config import get_settings
+
     _conn = await aiosqlite.connect(db_path)
-    # 允许多协程共用同一连接（FastAPI 异步场景）
+    # 决策：单进程单连接。aiosqlite 在专用线程里串行执行语句，AsyncSqliteSaver 自带异步锁；
+    # 同一会话的写入顺序由 Redis 会话锁保证。多进程写同一文件只靠 busy_timeout 排队，不支持多 worker。
     await _conn.execute("PRAGMA journal_mode=WAL;")
-    _saver = AsyncSqliteSaver(_conn)
-    await _saver.setup()
+    await _conn.execute(f"PRAGMA busy_timeout={int(get_settings().SQLITE_BUSY_TIMEOUT_MS)};")
+    await _conn.execute("PRAGMA synchronous=NORMAL;")
+    saver = AsyncSqliteSaver(_conn)
+    await saver.setup()
+    _saver = saver
     logger.info("AsyncSqliteSaver initialized — Agent state in SQLite (%s)", db_path)
 
 

@@ -4,6 +4,8 @@ from typing import Any, Optional
 
 from app.core.mysql_db import get_mysql_conn
 
+DEMO_PLAYER_IDS = ("10001", "10002", "10003", "10004", "10005")
+
 # 可查询的字段分组
 FIELD_GROUPS = {
     "status": ["status", "ban_reason"],
@@ -51,7 +53,10 @@ def list_demo_players() -> list[dict[str, Any]]:
     """列出全部 Mock 玩家，供测试页选择登录"""
     with get_mysql_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM game_players ORDER BY uid")
+            cur.execute(
+                "SELECT * FROM game_players WHERE uid IN (%s, %s, %s, %s, %s) ORDER BY uid",
+                DEMO_PLAYER_IDS,
+            )
             rows = cur.fetchall()
     return [_row_to_player(row) for row in rows]
 

@@ -1,5 +1,5 @@
 export const REVIEWER_ID = 'admin_001'
 
-export const AUTH_HEADERS = {
-  'X-Reviewer-Token': import.meta.env.VITE_REVIEWER_TOKEN || 'dev',
-}
+// Reviewer access is granted by the server after password verification.
+export const AUTH_HEADERS = {}
+export const PUBLIC_READ_ONLY = false

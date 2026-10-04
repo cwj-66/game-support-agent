@@ -1,5 +1,6 @@
 """工具执行节点：按 tool_calls 分发执行。"""
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Dict, Any, List
@@ -8,6 +9,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from ..state import AgentState
 from ..tools import get_all_tools, simplify_tool_context
+from app.core.config import get_settings
+from app.core.resilience import guarded_call
 
 MAX_REACT_ROUNDS = 5
 
@@ -24,6 +27,10 @@ def _tool_result_text(result: Any) -> str:
     return str(result)
 
 
+from ..events import emit_event
+from app.services.execution_trace import TOOLS
+
+
 async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     """执行 AIMessage 中的 tool_calls，写回 ToolMessage。"""
     messages = state.get("messages", [])
@@ -37,6 +44,7 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
     if not last_ai:
         return {"node_trace": ["tool_exec"]}
 
+    settings = get_settings()
     tools_map = {t.name: t for t in get_all_tools(state.get("user_id", ""))}
     tool_messages: List[ToolMessage] = []
     tool_call_records: List[Dict[str, Any]] = []
@@ -112,6 +120,8 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             "status": "started",
         }
 
+        if tool_name in TOOLS:
+            emit_event({"type": "tool", "id": tool_call_id, "name": tool_name, "label": TOOLS[tool_name], "status": "running"})
         tool = tools_map.get(tool_name)
         if tool is None:
             record["status"] = "failed"
@@ -121,6 +131,8 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                 name=tool_name,
                 tool_call_id=tool_call_id,
             ))
+            if tool_name in TOOLS:
+                emit_event({"type": "tool", "id": tool_call_id, "name": tool_name, "label": TOOLS[tool_name], "status": record["status"]})
             tool_call_records.append(record)
             continue
 
@@ -150,7 +162,12 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             continue
 
         try:
-            result = await tool.ainvoke(tool_args)
+            timeout = (settings.MCP_KNOWLEDGE_TIMEOUT_SECONDS if tool_name == "query_knowledge"
+                       else settings.MCP_TOOL_TIMEOUT_SECONDS)
+            # 决策：MCP 层不重试（检索/模型调用在更内层已有一次重试），只设超时并计入熔断。
+            result = await guarded_call(
+                "mcp", lambda: asyncio.wait_for(tool.ainvoke(tool_args), timeout), retries=0,
+            )
             result_str = _tool_result_text(result)
             record["status"] = "completed"
             record["output"] = result_str
@@ -171,9 +188,10 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
             ))
 
         except Exception as e:
+            error_text = "工具调用超时" if isinstance(e, (asyncio.TimeoutError, TimeoutError)) else (str(e) or type(e).__name__)
             record["status"] = "failed"
-            record["error"] = str(e)
-            error_result = {"has_answer": False, "error": str(e)}
+            record["error"] = error_text
+            error_result = {"has_answer": False, "error": error_text}
             if tool_name == "query_knowledge":
                 metadata["knowledge_result"] = error_result
                 metadata["sources"] = []
@@ -186,6 +204,8 @@ async def tool_exec_node(state: AgentState) -> Dict[str, Any]:
                 tool_call_id=tool_call_id,
             ))
 
+        if tool_name in TOOLS:
+            emit_event({"type": "tool", "id": tool_call_id, "name": tool_name, "label": TOOLS[tool_name], "status": record["status"]})
         tool_call_records.append(record)
 
     return {

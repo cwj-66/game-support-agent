@@ -1,6 +1,7 @@
 """人工接待 API。"""
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
@@ -26,9 +27,13 @@ from app.services.human_chat import (
     close_human_session,
     get_thread_messages,
 )
+from app.services.session_lock import session_guard, try_session_lock
 
-
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/human", tags=["人工接待"])
+
+_REVIEWER_LOCK_WAIT_SECONDS = 5  # 客服写入可稍等玩家的短写入完成
+_background: set[asyncio.Task] = set()
 
 
 @router.get("/pending", response_model=PendingHumanSessionsResponse)
@@ -76,22 +81,31 @@ async def list_pending_sessions(
         ))
 
     if expired_sessions:
-        asyncio.create_task(_auto_close_idle_sessions(expired_sessions))
+        task = asyncio.create_task(_auto_close_idle_sessions(expired_sessions))
+        _background.add(task)
+        task.add_done_callback(_background.discard)
 
     return PendingHumanSessionsResponse(total=len(tasks), items=tasks)
 
 
 async def _auto_close_idle_sessions(session_ids: list[str]) -> None:
-    """空闲超时：发送结束通知给玩家并清除接待状态"""
+    """空闲超时：发送结束通知给玩家并清除接待状态；会话正在被写入时跳过，下次轮询再处理"""
     for sid in session_ids:
+        guard = await try_session_lock(sid)
+        if guard is None:
+            continue
         try:
+            if not await get_pending(sid):
+                continue
             await append_agent_message(
                 sid,
                 "您好，由于长时间未收到您的回复，本次客服接待已自动结束。如需帮助请重新发起会话。",
             )
             await close_human_session(sid)
         except Exception:
-            pass
+            logger.warning("auto close idle session failed for %s", sid)
+        finally:
+            await guard.release()
 
 
 class HumanReplyRequest(BaseModel):
@@ -113,26 +127,26 @@ async def send_agent_message(
     - action=continue → 消息写入 checkpoint，会话保持接待中
     - action=close   → 写入最后一条消息后结束接待
     """
-    if not await get_pending(session_id):
-        raise HumanReviewNotPendingException(session_id)
-
     action: HumanSessionAction = body.action if body.action in ("continue", "close") else "continue"
-    processed_at = datetime.now(timezone.utc).isoformat()
     reply_text = (body.reply or "").strip()
+    if action == "continue" and not reply_text:
+        raise HTTPException(status_code=422, detail="继续接待时回复内容不能为空")
 
-    if action == "close":
-        if reply_text:
+    async with session_guard(session_id, wait_seconds=_REVIEWER_LOCK_WAIT_SECONDS):
+        if not await get_pending(session_id):
+            raise HumanReviewNotPendingException(session_id)
+        processed_at = datetime.now(timezone.utc).isoformat()
+        if action == "close":
+            if reply_text:
+                await append_agent_message(session_id, reply_text)
+            await append_agent_message(session_id, "本次接待已结束，感谢您的耐心等候。")
+            await close_human_session(session_id)
+        else:
             await append_agent_message(session_id, reply_text)
-        await append_agent_message(session_id, "本次接待已结束，感谢您的耐心等候。")
-        await close_human_session(session_id)
-    else:
-        if not reply_text:
-            raise HTTPException(status_code=422, detail="继续接待时回复内容不能为空")
-        await append_agent_message(session_id, reply_text)
-        pending_payload = await get_pending(session_id) or {}
-        pending_payload["timestamp"] = processed_at
-        pending_payload["last_agent_at"] = processed_at
-        await add_pending(session_id, pending_payload)
+            pending_payload = await get_pending(session_id) or {}
+            pending_payload["timestamp"] = processed_at
+            pending_payload["last_agent_at"] = processed_at
+            await add_pending(session_id, pending_payload)
 
     return HumanReplyResponse(
         success=True,
@@ -148,21 +162,21 @@ async def join_session(
     session_id: str,
     _token: str = Depends(require_reviewer_token),
 ):
-    """客服进入会话，发送「客服已接入」提示（每个会话只发一次）"""
-    payload = await get_pending(session_id)
-    if not payload:
-        return {"success": False, "message": "会话不在待接待状态"}
+    """客服进入会话，发送「客服已接入」提示（会话锁内检查 joined，保证只发一次）"""
+    async with session_guard(session_id, wait_seconds=_REVIEWER_LOCK_WAIT_SECONDS):
+        payload = await get_pending(session_id)
+        if not payload:
+            return {"success": False, "message": "会话不在待接待状态"}
 
-    if payload.get("joined"):
-        return {"success": True, "message": "already joined"}
+        if payload.get("joined"):
+            return {"success": True, "message": "already joined"}
 
-    payload["joined"] = True
-    await add_pending(session_id, payload)
-
-    await append_agent_message(
-        session_id,
-        "【系统提示】客服已接入，请问有什么可以帮您？",
-    )
+        await append_agent_message(
+            session_id,
+            "【系统提示】客服已接入，请问有什么可以帮您？",
+        )
+        payload["joined"] = True
+        await add_pending(session_id, payload)
 
     return {"success": True}
 

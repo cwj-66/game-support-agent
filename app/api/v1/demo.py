@@ -1,14 +1,17 @@
 """演示用接口：列出测试玩家并签发 JWT，供玩家端选号登录。"""
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api.deps import issue_game_token
+from app.core.blocking import run_blocking
 from app.core.config import Settings, get_settings
-from app.services.account_service import get_player, list_demo_players
+from app.services.account_service import DEMO_PLAYER_IDS, get_player, list_demo_players
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/demo", tags=["演示登录"])
 
 
@@ -40,9 +43,10 @@ class DemoLoginResponse(BaseModel):
 async def get_demo_players() -> list[DemoPlayer]:
     """返回 MySQL 中全部 Mock 玩家，无需登录。"""
     try:
-        rows = list_demo_players()
+        rows = await run_blocking(list_demo_players)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"账号数据库不可用: {e}") from e
+        logger.warning("list demo players failed: %s", type(e).__name__)
+        raise HTTPException(status_code=503, detail="账号数据库暂时不可用，请稍后重试") from e
     return [DemoPlayer(**row) for row in rows]
 
 
@@ -52,10 +56,13 @@ async def demo_login(
     settings: Settings = Depends(get_settings),
 ) -> DemoLoginResponse:
     """按 UID 签发玩家 JWT，有效期 24 小时。"""
+    if body.uid not in DEMO_PLAYER_IDS:
+        raise HTTPException(status_code=404, detail="该账号未开放演示")
     try:
-        record = get_player(body.uid)
+        record = await run_blocking(get_player, body.uid)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"账号数据库不可用: {e}") from e
+        logger.warning("demo login lookup failed: %s", type(e).__name__)
+        raise HTTPException(status_code=503, detail="账号数据库暂时不可用，请稍后重试") from e
 
     if record is None:
         raise HTTPException(status_code=404, detail=f"测试账号 {body.uid} 不存在")

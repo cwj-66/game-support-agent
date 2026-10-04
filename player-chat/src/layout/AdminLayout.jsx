@@ -11,7 +11,7 @@ function AdminLayout() {
       <aside className="admin-sidebar">
         <div className="admin-sidebar-brand">
           <h2>客服工作台</h2>
-          <p>Game Support Agent</p>
+          <p>已验证 · 完整客服工作台</p>
         </div>
         <nav className="admin-sidebar-nav">
           <NavLink
@@ -40,9 +40,9 @@ function AdminLayout() {
             ghost
             size="small"
             className="admin-exit-btn"
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/accounts')}
           >
-            退出
+            返回玩家端
           </Button>
         </div>
       </aside>

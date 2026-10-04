@@ -89,6 +89,8 @@ services:
       context: ${ENTERPRISE_RAG_DIR:-../enterprise-rag}
       dockerfile: Dockerfile
     container_name: game-support-rag-api
+    env_file:
+      - ${ENTERPRISE_RAG_DIR:-../enterprise-rag}/.env
     ports:
       - "${BIND_HOST:-127.0.0.1}:8000:8000"
     environment:
@@ -141,7 +143,7 @@ services:
       - RAG_API_KEY=${RAG_API_KEY:-dev-rag-key}
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-max}
+      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-max-0902}
       - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen3.8-flash}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - MYSQL_HOST=mysql
@@ -187,9 +189,11 @@ services:
       - DB_PATH=/app/data/game_support_docker.db
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-max}
+      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-max-0902}
       - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen3.8-flash}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - DEMO_ACCESS_PASSWORD_HASH=${DEMO_ACCESS_PASSWORD_HASH:-}
+      - DEMO_ACCESS_SECRET=${DEMO_ACCESS_SECRET:-}
       - REVIEWER_API_KEY=${REVIEWER_API_KEY:-dev}
       - GAME_JWT_SECRET=${GAME_JWT_SECRET:-your-game-jwt-secret-change-me}
       - MYSQL_HOST=mysql

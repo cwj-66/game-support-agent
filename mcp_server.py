@@ -23,8 +23,21 @@ _MCP_PORT = int(os.getenv("MCP_PORT", "8001"))
 mcp = FastMCP("customer-service", host=_MCP_HOST, port=_MCP_PORT)
 
 
+_rag_client = None
+
+
+def _get_rag_client():
+    """进程内复用同一个 RAG HTTP 客户端（连接池），不为每次查询新建连接。"""
+    global _rag_client
+    if _rag_client is None:
+        from agent.tools.rag_client import RAGClient
+        _rag_client = RAGClient()
+    return _rag_client
+
+
+# 决策：FastMCP 会在事件循环里直接调用同步工具函数，这里统一改为 async + 有界线程池执行数据库查询。
 @mcp.tool()
-def check_ticket(user_id: str, ticket_id: str = "") -> dict:
+async def check_ticket(user_id: str, ticket_id: str = "") -> dict:
     """查询工单处理进度和客服回复。
 
     两种情况使用此工具：
@@ -35,12 +48,13 @@ def check_ticket(user_id: str, ticket_id: str = "") -> dict:
         user_id: 玩家 UID
         ticket_id: 工单号（格式 TK-YYYYMMDD-XXXX），玩家提供了就传，否则自动查该玩家最近工单
     """
+    from app.core.blocking import run_blocking
     from app.services.ticket_service import check_ticket_core
-    return check_ticket_core(user_id, ticket_id)
+    return await run_blocking(check_ticket_core, user_id, ticket_id)
 
 
 @mcp.tool()
-def lookup_account(user_id: str, fields: str = "") -> dict:
+async def lookup_account(user_id: str, fields: str = "") -> dict:
     """查询玩家账号状态。按需传入 fields 只取需要的分类，不要获取不需要的分类。
 
     只能查询当前玩家自己的账号，无法查询其他玩家的信息。
@@ -51,8 +65,9 @@ def lookup_account(user_id: str, fields: str = "") -> dict:
                 可用值: status（封禁状态）/ recharge（充值记录）/ login（登录信息）。
                 不传时返回全部。
     """
+    from app.core.blocking import run_blocking
     from app.services.account_service import lookup_account_core
-    return lookup_account_core(user_id, fields)
+    return await run_blocking(lookup_account_core, user_id, fields)
 
 
 @mcp.tool()
@@ -67,15 +82,14 @@ async def query_knowledge(question: str) -> dict:
     Args:
         question: 用户要查询的问题，例如"原神如何获得原石？"
     """
-    from agent.tools.rag_client import RAGClient
-
-    client = RAGClient()
-    try:
-        return await client.query_knowledge(question)
-    finally:
-        await client.close()
+    return await _get_rag_client().query_knowledge(question)
 
 
 if __name__ == "__main__":
+    import logging
     import uvicorn
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
     uvicorn.run(mcp.streamable_http_app(), host=_MCP_HOST, port=_MCP_PORT)

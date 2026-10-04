@@ -1,0 +1,5 @@
+# Build the frontend with npm run build in player-chat before building this image.
+# docker build -f deploy/Dockerfile.frontend -t game-support-agent-player-chat player-chat
+FROM nginx:1.27-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY dist /usr/share/nginx/html

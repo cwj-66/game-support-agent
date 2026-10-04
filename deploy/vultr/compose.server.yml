@@ -1,0 +1,174 @@
+name: game-support-server
+# 2 核 4GB 单机预算：容器上限合计约 3.0GB，给宿主机 Nginx、作品集与系统留约 1GB。
+# 日志统一 json-file 轮转，每个容器最多 3 x 10MB。参数说明见 deploy/vultr/README.md。
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+x-agent-limits: &agent-limits
+  # 全站同时最多 3 个完整问答、最多排队 10 个、排队最长 60 秒（Redis 跨进程计数）
+  AGENT_MAX_CONCURRENCY: "3"
+  AGENT_MAX_QUEUE: "10"
+  AGENT_QUEUE_TIMEOUT_SECONDS: "60"
+  AGENT_EXEC_TIMEOUT_SECONDS: "90"
+  AGENT_LEASE_SECONDS: "30"
+  SSE_HEARTBEAT_SECONDS: "15"
+  CHAT_RATE_LIMIT_PER_MINUTE: "10"
+  CHAT_RATE_LIMIT_PER_IP_PER_MINUTE: "30"
+  # 容器网络与本机回环视为可信代理；只有来自这些地址的 X-Forwarded-For 才会被采用
+  TRUSTED_PROXY_CIDRS: "127.0.0.1/32,::1/128,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
+  COORDINATION_BACKEND: redis
+  LLM_CONNECT_TIMEOUT_SECONDS: "5"
+  LLM_READ_TIMEOUT_SECONDS: "30"
+  UPSTREAM_MAX_RETRIES: "1"
+  MCP_TOOL_TIMEOUT_SECONDS: "15"
+  MCP_KNOWLEDGE_TIMEOUT_SECONDS: "60"
+  RAG_TIMEOUT_SECONDS: "30"
+  MYSQL_POOL_SIZE: "5"
+  BLOCKING_POOL_SIZE: "4"
+services:
+  mysql:
+    image: mysql:8.0
+    logging: *logging
+    mem_limit: 640m
+    cpus: 0.75
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pass
+      MYSQL_DATABASE: game_support
+      MYSQL_USER: game_support
+      MYSQL_PASSWORD: game_support_pass
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--innodb-buffer-pool-size=128M", "--performance-schema=OFF", "--max-connections=60"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./scripts/mysql/init.sql:/docker-entrypoint-initdb.d/01_game.sql:ro
+      - ./scripts/mysql/init_rag.sql:/docker-entrypoint-initdb.d/02_rag.sql:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot_pass --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis-data:/data"]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 192m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  qdrant:
+    image: qdrant/qdrant
+    volumes: ["qdrant-data:/qdrant/storage"]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    cpus: 0.5
+  rag-api:
+    build:
+      context: ../enterprise-rag
+      dockerfile: Dockerfile.cloud
+    env_file: ../enterprise-rag/.env
+    logging: *logging
+    mem_limit: 640m
+    cpus: 0.75
+    environment:
+      CLOUD_MODEL_TIMEOUT: "15"
+      CLOUD_MAX_RETRIES: "1"
+      DB_POOL_SIZE: "5"
+      DB_MAX_OVERFLOW: "2"
+      DB_POOL_TIMEOUT: "5"
+      BLOCKING_POOL_SIZE: "4"
+      EMBED_PROVIDER: siliconflow
+      RERANK_PROVIDER: siliconflow
+      EMBED_MODEL: BAAI/bge-m3
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      DATABASE_URL: mysql+pymysql://rag_user:rag_password@mysql:3306/rag_database
+      KNOWLEDGE_READ_ONLY: "true"
+    depends_on:
+      mysql: {condition: service_healthy}
+      qdrant: {condition: service_started}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  mcp-server:
+    build: .
+    env_file: .env
+    logging: *logging
+    mem_limit: 256m
+    cpus: 0.5
+    environment:
+      <<: *agent-limits
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8001
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: game_support
+      MYSQL_PASSWORD: game_support_pass
+      MYSQL_DATABASE: game_support
+      RAG_SERVICE_URL: http://rag-api:8000
+    command: ["python", "mcp_server.py"]
+    depends_on:
+      mysql: {condition: service_healthy}
+      rag-api: {condition: service_healthy}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1',8001),2).close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  agent-api:
+    build: .
+    env_file: .env
+    logging: *logging
+    mem_limit: 640m
+    cpus: 1.0
+    # 保持单 worker：SQLite 检查点只支持单进程写入（见 README「扩容前提」）。
+    # 关闭 uvicorn 的代理头改写，真实 IP 由应用按 TRUSTED_PROXY_CIDRS 从右向左解析，避免信任伪造的最左地址。
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002", "--workers", "1",
+              "--no-proxy-headers", "--timeout-graceful-shutdown", "20"]
+    environment:
+      <<: *agent-limits
+      HOST: 0.0.0.0
+      PORT: 8002
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: game_support
+      MYSQL_PASSWORD: game_support_pass
+      MYSQL_DATABASE: game_support
+      RAG_SERVICE_URL: http://rag-api:8000
+      MCP_SERVER_URL: http://mcp-server:8001
+      REDIS_URL: redis://redis:6379/0
+      DB_PATH: /app/data/game_support_docker.db
+    volumes: ["./data:/app/data", "./logs:/app/logs"]
+    depends_on:
+      mcp-server: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  player-chat:
+    build:
+      context: ./player-chat
+      dockerfile: ../deploy/Dockerfile.frontend
+    ports: ["127.0.0.1:15177:80"]
+    logging: *logging
+    mem_limit: 64m
+    cpus: 0.25
+    depends_on:
+      agent-api: {condition: service_healthy}
+    restart: unless-stopped
+volumes:
+  mysql-data:
+  redis-data:
+  qdrant-data:

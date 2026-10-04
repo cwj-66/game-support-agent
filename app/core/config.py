@@ -1,6 +1,6 @@
 """pydantic-settings 环境变量配置。"""
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
         description="可选 OpenAI API Key；当前 LLM 调用仍使用 DashScope 兼容接口",
     )
     REASONING_MODEL_NAME: str = Field(
-        default="qwen3.8-max",
+        default="qwen3.8-max-0902",
         description="reasoning 推理节点使用的 LLM 模型",
     )
     GENERATE_MODEL_NAME: str = Field(
@@ -109,7 +109,52 @@ class Settings(BaseSettings):
         description="SQLite 检查点数据库路径（LangGraph Agent 状态）",
     )
 
+    SQLITE_BUSY_TIMEOUT_MS: int = Field(default=5000, description="SQLite 写锁等待上限（毫秒）")
+
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
+
+    # --- 跨进程协调：容量、会话锁、频率限制、幂等 ---
+    COORDINATION_BACKEND: Literal["redis", "memory"] = Field(
+        default="redis",
+        description="redis=生产（跨进程）；memory=仅单进程开发/测试，不能用于多 worker",
+    )
+    AGENT_MAX_CONCURRENCY: int = Field(default=3, ge=1, description="全站同时执行的完整问答数")
+    AGENT_MAX_QUEUE: int = Field(default=10, ge=0, description="全站最多排队问答数")
+    AGENT_QUEUE_TIMEOUT_SECONDS: float = Field(default=60, gt=0, description="排队最长等待秒数")
+    AGENT_LEASE_SECONDS: float = Field(default=30, gt=0, description="执行名额租约时长，执行期间按 1/3 周期续租")
+    AGENT_EXEC_TIMEOUT_SECONDS: float = Field(default=90, gt=0, description="单个问答执行上限（不含排队）")
+    AGENT_QUEUE_POLL_SECONDS: float = Field(default=0.5, gt=0, description="排队轮询间隔")
+    SSE_HEARTBEAT_SECONDS: float = Field(default=15, gt=0, description="SSE 心跳间隔")
+    SESSION_LOCK_TTL_SECONDS: float = Field(default=30, gt=0, description="会话锁租约，持有期间续租")
+    SESSION_LOCK_WAIT_SECONDS: float = Field(default=2, ge=0, description="短写入抢会话锁的等待秒数")
+    IDEMPOTENCY_TTL_SECONDS: int = Field(default=600, gt=0, description="幂等结果保留秒数")
+    CHAT_RATE_LIMIT_PER_MINUTE: int = Field(default=10, ge=1, description="每个访客每分钟聊天提交次数")
+    CHAT_RATE_LIMIT_PER_IP_PER_MINUTE: int = Field(default=30, ge=1, description="每个客户端 IP 每分钟提交上限（防清 cookie 绕过）")
+    TRUSTED_PROXY_CIDRS: str = Field(
+        default="127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+        description="可信反向代理网段；只有直连对端在此范围内才读取转发头",
+    )
+
+    # --- 云端调用超时、重试与熔断 ---
+    LLM_CONNECT_TIMEOUT_SECONDS: float = Field(default=5, gt=0, description="Qwen 连接超时")
+    LLM_READ_TIMEOUT_SECONDS: float = Field(default=30, gt=0, description="Qwen 单次读取超时")
+    LLM_MAX_CONNECTIONS: int = Field(default=10, ge=1, description="Qwen HTTP 连接池上限")
+    UPSTREAM_MAX_RETRIES: int = Field(default=1, ge=0, le=2, description="临时错误的最大重试次数")
+    UPSTREAM_RETRY_MAX_WAIT_SECONDS: float = Field(default=2, ge=0, description="单次重试最长退避（含 Retry-After）")
+    MCP_TOOL_TIMEOUT_SECONDS: float = Field(default=15, gt=0, description="账号/工单 MCP 工具超时")
+    MCP_KNOWLEDGE_TIMEOUT_SECONDS: float = Field(default=60, gt=0, description="知识查询 MCP 工具超时（含检索与作答）")
+    RAG_TIMEOUT_SECONDS: float = Field(default=30, gt=0, description="RAG 检索 HTTP 超时")
+    BREAKER_FAILURE_THRESHOLD: int = Field(default=5, ge=1, description="窗口内连续失败多少次后熔断")
+    BREAKER_WINDOW_SECONDS: float = Field(default=60, gt=0, description="熔断统计窗口")
+    BREAKER_OPEN_SECONDS: float = Field(default=30, gt=0, description="熔断打开时长，之后放行一个探测请求")
+
+    # --- MySQL 连接池与阻塞线程池 ---
+    MYSQL_POOL_SIZE: int = Field(default=5, ge=1, description="每进程 MySQL 连接上限")
+    MYSQL_POOL_TIMEOUT_SECONDS: float = Field(default=5, gt=0, description="等待空闲连接上限")
+    MYSQL_CONNECT_TIMEOUT_SECONDS: int = Field(default=5, ge=1, description="MySQL 建连超时")
+    MYSQL_READ_TIMEOUT_SECONDS: int = Field(default=10, ge=1, description="MySQL 读写超时")
+    MYSQL_POOL_RECYCLE_SECONDS: int = Field(default=1800, ge=60, description="连接最长复用时间")
+    BLOCKING_POOL_SIZE: int = Field(default=4, ge=1, description="同步数据库调用使用的线程上限")
 
     @property
     def mysql_url(self) -> str:

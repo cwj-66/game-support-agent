@@ -1,5 +1,6 @@
 """LLM 推理节点：绑定工具自主决策。"""
 
+import logging
 from typing import Dict, Any
 import re
 
@@ -10,25 +11,27 @@ from ..state import AgentState
 from ..tools import get_all_tools
 from ..prompts.system import GAME_SUPPORT_SYSTEM_PROMPT
 from app.core.config import get_settings
+from app.core.llm import get_chat_model, llm_invoke
+
+logger = logging.getLogger(__name__)
+
+SERVICE_BUSY_REPLY = "抱歉，智能客服暂时繁忙，暂时无法处理您的问题，请稍后重试。"
 
 
 def _build_llm_from_settings() -> ChatOpenAI:
-    """从配置创建 LLM 实例"""
-    settings = get_settings()
-    model_name = settings.REASONING_MODEL_NAME or "qwen3.8-max"
-    base_url = settings.LLM_BASE_URL or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    extra_body = (
-        {"thinking": {"type": "disabled"}}
-        if not settings.ENABLE_THINKING
-        else None
-    )
-    return ChatOpenAI(
-        api_key=settings.DASHSCOPE_API_KEY,
-        model=model_name,
-        base_url=base_url,
-        temperature=0.2,
-        extra_body=extra_body,
-    )
+    """返回推理模型的共享实例（连接池、超时与重试统一由 app.core.llm 管理）"""
+    return get_chat_model(get_settings().REASONING_MODEL_NAME)
+
+
+def _service_failure(metadata: dict, exc: Exception) -> Dict[str, Any]:
+    """模型调用失败：记录诊断类型，向玩家返回通用提示，并让 generate 节点不再调用模型。"""
+    logger.warning("reasoning LLM failed: %s", type(exc).__name__)
+    metadata["terminal_response"] = SERVICE_BUSY_REPLY
+    return {
+        "messages": [AIMessage(content=SERVICE_BUSY_REPLY)],
+        "metadata": metadata,
+        "node_trace": ["reasoning"],
+    }
 
 
 async def reasoning_node(state: AgentState) -> Dict[str, Any]:
@@ -63,7 +66,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
         system_prompt += f"\n\n当前玩家 UID：{user_id}"
         try:
             from app.services.long_term_memory import format_memory_prompt_block
-            memory_block = await format_memory_prompt_block(user_id)
+            memory_block = await format_memory_prompt_block(user_id, session_id=state.get("session_id", ""))
             if memory_block:
                 system_prompt += f"\n\n{memory_block}"
         except Exception:
@@ -79,7 +82,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     if metadata.get("ticket_offer_pending"):
         metadata.pop("ticket_offer_pending", None)
         try:
-            response: AIMessage = await llm.ainvoke(llm_messages)
+            response: AIMessage = await llm_invoke(llm, llm_messages)
         except Exception:
             response = AIMessage(content="好的，已为您整理了问题详情，请稍后确认是否需要创建工单。")
         content = response.content or ""
@@ -98,7 +101,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     if metadata.get("human_offer_pending"):
         metadata.pop("human_offer_pending", None)
         try:
-            response: AIMessage = await llm.ainvoke(llm_messages)
+            response: AIMessage = await llm_invoke(llm, llm_messages)
         except Exception:
             response = AIMessage(content="我们理解您的心情。请通过下方按钮确认是否需要转接人工客服。")
         content = response.content or ""
@@ -114,24 +117,13 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
             "node_trace": ["reasoning"],
         }
 
-    if metadata.get("tool_repeated_call"):
+    if metadata.get("tool_repeated_call") or metadata.get("max_rounds_reached"):
         metadata.pop("tool_repeated_call", None)
-        try:
-            response: AIMessage = await llm.ainvoke(llm_messages)
-        except Exception as exc:
-            response = AIMessage(content=f"抱歉，处理您的请求时出现问题，建议联系人工客服。（错误：{exc}）")
-        return {
-            "messages": [response],
-            "metadata": metadata,
-            "node_trace": ["reasoning"],
-        }
-
-    if metadata.get("max_rounds_reached"):
         metadata.pop("max_rounds_reached", None)
         try:
-            response: AIMessage = await llm.ainvoke(llm_messages)
+            response: AIMessage = await llm_invoke(llm, llm_messages)
         except Exception as exc:
-            response = AIMessage(content=f"抱歉，处理您的请求时出现问题，建议联系人工客服。（错误：{exc}）")
+            return _service_failure(metadata, exc)
         return {
             "messages": [response],
             "metadata": metadata,
@@ -142,9 +134,9 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
     llm_with_tools = llm.bind_tools(allowed_tools)
 
     try:
-        response: AIMessage = await llm_with_tools.ainvoke(llm_messages)
+        response: AIMessage = await llm_invoke(llm_with_tools, llm_messages)
     except Exception as exc:
-        response = AIMessage(content=f"抱歉，处理您的请求时出现问题，建议联系人工客服。（错误：{exc}）")
+        return _service_failure(metadata, exc)
 
     has_tool_calls = bool(getattr(response, "tool_calls", None))
 

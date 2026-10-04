@@ -1,3 +1,4 @@
+import { demoFetch } from '../access'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -13,7 +14,7 @@ import {
   Alert,
 } from 'antd'
 import { API_BASE } from '../config'
-import { AUTH_HEADERS, REVIEWER_ID } from '../adminAuth'
+import { AUTH_HEADERS, REVIEWER_ID, PUBLIC_READ_ONLY } from '../adminAuth'
 import './AdminPage.css'
 
 const HISTORY_POLL_INTERVAL = 3000
@@ -76,7 +77,7 @@ function AdminPage() {
   const fetchPending = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
-      const res = await fetch(`${API_BASE}/human/pending`, {
+      const res = await demoFetch(`${API_BASE}/human/pending`, {
         headers: AUTH_HEADERS,
       })
       if (!res.ok) throw new Error('fetch failed')
@@ -105,7 +106,7 @@ function AdminPage() {
     if (!silent) setHistoryLoading(true)
     try {
       // 使用客服专用历史接口（含 human_agent 角色，过滤 ToolMessage）
-      const res = await fetch(`${API_BASE}/human/history/${sessionId}`, {
+      const res = await demoFetch(`${API_BASE}/human/history/${sessionId}`, {
         headers: AUTH_HEADERS,
       })
       if (!res.ok) throw new Error('history failed')
@@ -148,7 +149,7 @@ function AdminPage() {
     setDrawerOpen(true)
 
     try {
-      await fetch(`${API_BASE}/human/join/${record.session_id}`, {
+      if (!PUBLIC_READ_ONLY) await demoFetch(`${API_BASE}/human/join/${record.session_id}`, {
         method: 'POST',
         headers: AUTH_HEADERS,
       })
@@ -161,6 +162,7 @@ function AdminPage() {
 
   /** 发送消息（继续接待） */
   const sendMessage = async () => {
+    if (PUBLIC_READ_ONLY) return
     const text = reply.trim()
     if (!text) {
       message.warning('请填写回复内容')
@@ -168,7 +170,7 @@ function AdminPage() {
     }
     setSubmitting(true)
     try {
-      const res = await fetch(`${API_BASE}/human/review/${currentTask.session_id}`, {
+      const res = await demoFetch(`${API_BASE}/human/review/${currentTask.session_id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...AUTH_HEADERS },
         body: JSON.stringify({ reply: text, reviewer_id: REVIEWER_ID, action: 'continue' }),
@@ -186,10 +188,11 @@ function AdminPage() {
 
   /** 结束接待（可携带最后一条消息，也可为空） */
   const endSession = async () => {
+    if (PUBLIC_READ_ONLY) return
     setSubmitting(true)
     try {
       const text = reply.trim()
-      const res = await fetch(`${API_BASE}/human/review/${currentTask.session_id}`, {
+      const res = await demoFetch(`${API_BASE}/human/review/${currentTask.session_id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...AUTH_HEADERS },
         body: JSON.stringify({
@@ -279,7 +282,7 @@ function AdminPage() {
         <h1>待接待会话</h1>
         <div className="admin-topbar-actions">
           <span className="admin-topbar-meta">每 5 秒自动刷新</span>
-          <Button size="small" onClick={() => navigate('/')}>
+          <Button size="small" onClick={() => navigate('/accounts')}>
             退出
           </Button>
         </div>
@@ -342,7 +345,7 @@ function AdminPage() {
             danger
             onClick={endSession}
             loading={submitting}
-            disabled={submitting}
+            disabled={submitting || PUBLIC_READ_ONLY}
           >
             结束接待
           </Button>
@@ -423,9 +426,10 @@ function AdminPage() {
 
             <div className="reply-area">
               <Input.TextArea
+                disabled={PUBLIC_READ_ONLY}
                 rows={3}
                 value={reply}
-                placeholder="输入回复，Enter 发送（Shift+Enter 换行）"
+                placeholder={PUBLIC_READ_ONLY ? '公开演示仅展示会话；请在本机客服工作台回复玩家。' : '输入回复，Enter 发送（Shift+Enter 换行）'}
                 onChange={(e) => setReply(e.target.value)}
                 onPressEnter={(e) => {
                   if (!e.shiftKey) {
@@ -439,7 +443,7 @@ function AdminPage() {
                   type="primary"
                   onClick={sendMessage}
                   loading={submitting}
-                  disabled={submitting}
+                  disabled={submitting || PUBLIC_READ_ONLY}
                 >
                   发送
                 </Button>

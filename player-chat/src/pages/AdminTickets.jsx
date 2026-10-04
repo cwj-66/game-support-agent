@@ -1,3 +1,4 @@
+import { demoFetch } from '../access'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -14,7 +15,7 @@ import {
   Button,
 } from 'antd'
 import { API_BASE } from '../config'
-import { AUTH_HEADERS } from '../adminAuth'
+import { AUTH_HEADERS, REVIEWER_ID } from '../adminAuth'
 import {
   STATUS_OPTIONS,
   STATUS_MAP,
@@ -37,10 +38,13 @@ function AdminTickets() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [currentTicket, setCurrentTicket] = useState(null)
+  const [editStatus, setEditStatus] = useState('pending')
+  const [editReply, setEditReply] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/ticket/stats`, { headers: AUTH_HEADERS })
+      const res = await demoFetch(`${API_BASE}/ticket/stats`, { headers: AUTH_HEADERS })
       if (res.ok) setStats(await res.json())
     } catch {
       // 列表失败时再提示
@@ -57,7 +61,7 @@ function AdminTickets() {
       if (statusFilter) params.set('status', statusFilter)
       if (uidFilter.trim()) params.set('player_uid', uidFilter.trim())
 
-      const res = await fetch(`${API_BASE}/ticket/admin/list?${params}`, {
+      const res = await demoFetch(`${API_BASE}/ticket/admin/list?${params}`, {
         headers: AUTH_HEADERS,
       })
       if (!res.ok) {
@@ -87,7 +91,7 @@ function AdminTickets() {
     setDetailLoading(true)
     setCurrentTicket(null)
     try {
-      const res = await fetch(`${API_BASE}/ticket/admin/${ticketId}`, {
+      const res = await demoFetch(`${API_BASE}/ticket/admin/${ticketId}`, {
         headers: AUTH_HEADERS,
       })
       if (!res.ok) {
@@ -95,13 +99,32 @@ function AdminTickets() {
         setDrawerOpen(false)
         return
       }
-      setCurrentTicket(await res.json())
+      const ticket = await res.json()
+      setCurrentTicket(ticket)
+      setEditStatus(ticket.status)
+      setEditReply(ticket.agent_reply || '')
     } catch {
       message.error('网络异常')
       setDrawerOpen(false)
     } finally {
       setDetailLoading(false)
     }
+  }
+
+  const saveTicket = async () => {
+    if (!currentTicket || saving) return
+    setSaving(true)
+    try {
+      const response = await demoFetch(`${API_BASE}/ticket/${currentTicket.ticket_id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', ...AUTH_HEADERS },
+        body: JSON.stringify({ status: editStatus, agent_reply: editReply, reviewer_id: REVIEWER_ID }),
+      })
+      if (!response.ok) throw new Error('保存工单失败')
+      setCurrentTicket(await response.json())
+      message.success('工单处理结果已保存')
+      fetchTickets(); fetchStats()
+    } catch (error) { message.error(error.message || '保存失败，请重试') }
+    finally { setSaving(false) }
   }
 
   const columns = [
@@ -169,7 +192,7 @@ function AdminTickets() {
         <h1>工单</h1>
         <div className="admin-topbar-actions">
           <span className="admin-topbar-meta">数据来自 MySQL support_tickets</span>
-          <Button size="small" onClick={() => navigate('/')}>
+          <Button size="small" onClick={() => navigate('/accounts')}>
             退出
           </Button>
         </div>
@@ -275,7 +298,7 @@ function AdminTickets() {
       >
         <Spin spinning={detailLoading}>
           {currentTicket && (
-            <Descriptions column={1} bordered size="small">
+            <><Descriptions column={1} bordered size="small">
               <Descriptions.Item label="玩家 UID">
                 {currentTicket.player_uid}
               </Descriptions.Item>
@@ -325,6 +348,16 @@ function AdminTickets() {
                 </Descriptions.Item>
               )}
             </Descriptions>
+            <section className="ticket-editor" style={{ marginTop: 24 }}>
+              <h3>处理工单</h3>
+              <label htmlFor="ticket-status">工单状态</label>
+              <Select id="ticket-status" aria-label="工单处理状态" style={{ width: '100%', margin: '8px 0 18px' }}
+                value={editStatus} options={STATUS_OPTIONS.filter((o) => o.value)} onChange={setEditStatus} />
+              <label htmlFor="ticket-reply">处理结果 / 客服回复</label>
+              <Input.TextArea id="ticket-reply" aria-label="工单处理结果" rows={4} maxLength={2000}
+                value={editReply} onChange={(e) => setEditReply(e.target.value)} style={{ margin: '8px 0 18px' }} />
+              <Button type="primary" loading={saving} onClick={saveTicket}>保存处理结果</Button>
+            </section></>
           )}
         </Spin>
       </Drawer>

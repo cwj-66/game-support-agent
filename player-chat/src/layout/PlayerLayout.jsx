@@ -1,11 +1,14 @@
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Button, message } from 'antd'
+import { MessageOutlined, TeamOutlined, FileTextOutlined, AppstoreOutlined, CustomerServiceOutlined, LogoutOutlined } from '@ant-design/icons'
 import { useAuth } from '../auth'
+import ChatPage from '../pages/ChatPage'
 import './PlayerLayout.css'
 
 function PlayerLayout() {
   const { player, logout } = useAuth()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
 
   const handleLogout = () => {
     logout()
@@ -29,14 +32,14 @@ function PlayerLayout() {
             <h1 className="player-title">游戏客服</h1>
             <nav className="player-nav">
               <NavLink
-                to="/"
+                to="/chat"
                 end
                 onClick={requireAccount}
                 className={({ isActive }) =>
                   `player-nav-link${isActive ? ' active' : ''}`
                 }
               >
-                聊天
+                <MessageOutlined aria-hidden="true" /> 聊天
               </NavLink>
               <NavLink
                 to="/accounts"
@@ -44,7 +47,7 @@ function PlayerLayout() {
                   `player-nav-link${isActive ? ' active' : ''}`
                 }
               >
-                测试账号
+                <TeamOutlined aria-hidden="true" /> 测试账号
               </NavLink>
               <NavLink
                 to="/tickets"
@@ -53,12 +56,13 @@ function PlayerLayout() {
                   `player-nav-link${isActive ? ' active' : ''}`
                 }
               >
-                我的工单
+                <FileTextOutlined aria-hidden="true" /> 我的工单
               </NavLink>
             </nav>
           </div>
-          <Link to="/admin" className="workbench-entry">
-            客服工作台
+          <Link to="/" className="workbench-entry portfolio-entry"><AppstoreOutlined aria-hidden="true" /> 作品集</Link>
+          <Link to="/admin" target="_blank" rel="noopener noreferrer" className="workbench-entry customer-workbench-entry">
+            <CustomerServiceOutlined aria-hidden="true" /> 客服工作台
           </Link>
           <div className="player-user">
             {player ? (
@@ -67,7 +71,7 @@ function PlayerLayout() {
                   {player.nickname}
                   <em>UID {player.uid}</em>
                 </span>
-                <Button size="small" ghost onClick={handleLogout}>
+                <Button className="logout-button" size="small" icon={<LogoutOutlined aria-hidden="true" />} onClick={handleLogout}>
                   退出
                 </Button>
               </>
@@ -78,6 +82,7 @@ function PlayerLayout() {
         </div>
       </header>
       <main className="player-main">
+        {player && <div hidden={pathname !== '/chat'}><ChatPage key={player.uid} /></div>}
         <Outlet />
       </main>
     </div>

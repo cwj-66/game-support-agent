@@ -10,11 +10,15 @@ RAG 服务 HTTP 客户端
 答案生成在 Agent 侧（knowledge_answer），不依赖 RAG 服务内的 LLM。
 """
 
+import logging
 from typing import Any, Optional
 
 import httpx
 
 from app.core.config import get_settings
+from app.core.resilience import guarded_call
+
+logger = logging.getLogger(__name__)
 
 
 class RAGClient:
@@ -23,12 +27,12 @@ class RAGClient:
     def __init__(
         self,
         base_url: str | None = None,
-        timeout: float = 10.0,
+        timeout: float | None = None,
         api_key: str | None = None,
     ):
         settings = get_settings()
         self.base_url = (base_url or settings.RAG_SERVICE_URL).rstrip("/")
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else settings.RAG_TIMEOUT_SECONDS
         self.api_key = api_key if api_key is not None else settings.RAG_API_KEY
         self._client: Optional[httpx.AsyncClient] = None
 
@@ -54,13 +58,18 @@ class RAGClient:
         client = await self._get_client()
         payload = {"question": question, "top_k": top_k}
 
-        try:
+        async def call() -> httpx.Response:
             response = await client.post(
                 f"{self.base_url}/api/v1/retrieve",
                 json=payload,
                 headers=self._headers(),
             )
             response.raise_for_status()
+            return response
+
+        try:
+            # 决策：检索 HTTP 不重试（RAG 服务内的云端向量化/重排已各有一次重试），只做熔断。
+            response = await guarded_call("rag", call, retries=0)
             data = response.json()
             sources = data.get("sources") or []
             return {
@@ -69,11 +78,11 @@ class RAGClient:
                 "retrieve_mode": data.get("retrieve_mode", ""),
             }
         except Exception as e:
-            print(f"[RAGClient] 检索失败: {e}")
+            logger.warning("RAG retrieve failed: %s", type(e).__name__)
             return {
                 "sources": [],
                 "max_score": 0.0,
-                "error": str(e),
+                "error": type(e).__name__,
                 "message": "知识服务暂时不可用，请稍后重试",
             }
 

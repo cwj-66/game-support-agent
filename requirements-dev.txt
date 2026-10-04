@@ -1,0 +1,3 @@
+# 仅本地测试使用，不进入生产镜像
+-r requirements.txt
+fakeredis[lua]>=2.26

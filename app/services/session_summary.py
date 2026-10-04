@@ -78,16 +78,16 @@ async def archive_session_before_clear(session_id: str) -> None:
 
     try:
         from langchain_core.messages import SystemMessage
-        from app.core.llm import get_chat_model
+        from app.core.llm import get_chat_model, llm_invoke
 
         llm = get_chat_model()
-        result = await llm.ainvoke([
+        result = await llm_invoke(llm, [
             SystemMessage(content=SUMMARY_PROMPT),
             HumanMessage(content=transcript),
         ])
         summary = result.content if isinstance(result.content, str) else str(result.content)
     except Exception as exc:
-        logger.warning("archive: LLM summary failed for %s: %s", session_id, exc)
+        logger.warning("archive: LLM summary failed for %s: %s", session_id, type(exc).__name__)
         summary = f"玩家 {user_id} 本次会话共 {len(messages)} 条消息，结果：{outcome}"
 
     await save_session_summary(

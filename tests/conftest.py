@@ -1,11 +1,39 @@
 """Pytest 共享 fixture。"""
 
+import os
+
+# 测试默认使用单进程内存协调后端；Redis 语义测试见 test_coordination_redis.py。
+os.environ.setdefault("COORDINATION_BACKEND", "memory")
+
 import pytest
 import pytest_asyncio
 from typing import Generator, AsyncGenerator
 import tempfile
 import shutil
 from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+def fresh_coordination():
+    """每个用例使用全新的内存协调状态与熔断器。"""
+    from app.core import resilience
+    from app.services import coordination
+
+    coordination.set_coordination(coordination.MemoryCoordination())
+    resilience._breakers.clear()
+    yield
+    coordination.set_coordination(None)
+    resilience._breakers.clear()
+
+
+def make_request(ip: str = "203.0.113.10", visitor: str = "a" * 32, headers: dict | None = None):
+    """构造带客户端地址与访客 cookie 的 starlette Request。"""
+    from starlette.requests import Request
+
+    raw = [(b"cookie", f"gsa_visitor={visitor}".encode())]
+    raw += [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    return Request({"type": "http", "method": "POST", "path": "/", "headers": raw,
+                    "client": (ip, 12345), "query_string": b""})
 
 
 @pytest.fixture(scope="session")

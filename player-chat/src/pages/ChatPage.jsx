@@ -1,21 +1,43 @@
+import { demoFetch } from '../access'
 import { useState, useRef, useEffect } from 'react'
-import { Input, Button, Card, Drawer, Spin, Tag } from 'antd'
+import { Input, Button, Card, Drawer, Spin, Tag, message } from 'antd'
+import { UserOutlined, PoweroffOutlined } from '@ant-design/icons'
 import { API_BASE } from '../config'
-import { apiFetch } from '../api'
+import { apiFetch, newRequestId, readError } from '../api'
+import { consumeEvents } from '../sse'
 import { useAuth } from '../auth'
 import { PlayerProfileDesc, scenarioOf } from '../PlayerProfile'
+import { ExamplePanel, TracePanel } from '../components/DemoPanels'
 import './ChatPage.css'
 
 const POLL_INTERVAL = 3000
-const SEND_TIMEOUT = 90 * 1000
+// 兜底超时：服务端排队上限 60s + 执行上限 90s，之外再留余量；正常情况由服务端先给出明确结果
+const SEND_TIMEOUT = 180 * 1000
 
 /** 根据 HTTP 状态码返回可读错误信息 */
 const getHttpErrorMessage = (status) => {
   if (status === 401) return '登录已过期，请到「测试账号」页重新选择账号'
   if (status === 403) return '无权访问该会话，请刷新页面重试'
+  if (status === 409) return '上一条消息仍在处理，请等待完成后再操作。'
+  if (status === 429) return '提问太频繁，请稍后再试。'
+  if (status === 503) return '服务繁忙，请稍后再试。'
   if (status >= 500) return '服务端错误，请稍后重试'
   return '请求失败，请检查后端是否启动'
 }
+
+/** 失败后右侧状态：区分服务繁忙、排队超时、频率限制等真实原因 */
+const traceErrorFor = (code, status) => {
+  if (code === 'server_busy' || code === 'capacity_unavailable') return '服务繁忙，本轮未进入处理。'
+  if (code === 'queue_timeout') return '排队等待超时，本轮未开始处理。'
+  if (code === 'rate_limited' || status === 429) return '提问太频繁，本轮未提交。'
+  if (code === 'session_busy' || status === 409) return '上一条消息仍在处理。'
+  if (code === 'agent_timeout') return '本轮处理超时，已停止。'
+  if (code === 'turn_cancelled') return '本轮已停止。'
+  if (code === 'stream_interrupted') return '回复中断，未收到完整执行记录。'
+  return '本轮未完成。'
+}
+
+const newSessionId = (uid) => `${uid}_${newRequestId()}`
 
 const DEFAULT_REPLY = '很抱歉没能为您解决问题，您可以继续向我求助。'
 const HUMAN_OFFER_REPLY =
@@ -39,15 +61,37 @@ const INITIAL_MESSAGES = [
   },
 ]
 
+// Render the model's emphasis as React text nodes, never as raw HTML.
+function ReplyText({ text }) {
+  return String(text).split(/(\*\*[^*]+\*\*)/g).map((part, index) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={index}>{part.slice(2, -2)}</strong>
+      : part,
+  )
+}
+
+function readConversation(uid) {
+  try { return JSON.parse(sessionStorage.getItem(`demo-chat:${uid}`)) || {} }
+  catch { return {} }
+}
+
 function ChatPage() {
   const { player, logout } = useAuth()
-  const [sessionId] = useState(() => `${player.uid}_${Date.now()}`)
-  const [messages, setMessages] = useState(INITIAL_MESSAGES)
-  const [input, setInput] = useState('')
+  const [saved] = useState(() => readConversation(player.uid))
+  const [sessionId, setSessionId] = useState(() => saved.sessionId || newSessionId(player.uid))
+  const [messages, setMessages] = useState(() => saved.messages?.length ? saved.messages.map((m) => m.loading ? { ...m, loading: false, content: m.content || '页面刷新中断了这次回复，请重新发送问题。' } : m) : INITIAL_MESSAGES)
+  const [input, setInput] = useState(saved.input || '')
   const [sending, setSending] = useState(false)
-  const [humanMode, setHumanMode] = useState(false)
-  const [ticketOffer, setTicketOffer] = useState(null)
-  const [humanOffer, setHumanOffer] = useState(null)
+  const [ending, setEnding] = useState(false)
+  const [trace, setTrace] = useState(saved.trace || null)
+  const [traceError, setTraceError] = useState('')
+  const [startedAt, setStartedAt] = useState(0)
+  // idle / connecting / queued / running：只有服务端确认入场后才进入 running
+  const [phase, setPhase] = useState('idle')
+  const [queuePosition, setQueuePosition] = useState(null)
+  const [humanMode, setHumanMode] = useState(saved.humanMode || false)
+  const [ticketOffer, setTicketOffer] = useState(saved.ticketOffer || null)
+  const [humanOffer, setHumanOffer] = useState(saved.humanOffer || null)
   const [ticketConfirming, setTicketConfirming] = useState(false)
   const [humanConfirming, setHumanConfirming] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -55,10 +99,24 @@ function ChatPage() {
   const [profileLoading, setProfileLoading] = useState(false)
 
   // 已消费的历史消息总数，用于增量拉取（包含 user + assistant 全量）
-  const seenHistoryCountRef = useRef(0)
+  const seenHistoryCountRef = useRef(saved.seenHistoryCount || 0)
   // 当前等待中的"思考气泡" ID，轮询到回复后用来替换
   const loadingMsgIdRef = useRef(null)
   const listEndRef = useRef(null)
+  const controllerRef = useRef(null)
+  // 上一次未完成的提交：玩家原样重发时沿用同一个请求 ID，服务端若已完成会直接返回原结果
+  const lastFailedRef = useRef(null)
+
+  useEffect(() => () => controllerRef.current?.abort(), [])
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(`demo-chat:${player.uid}`, JSON.stringify({
+        sessionId, messages, input, trace, humanMode, ticketOffer, humanOffer,
+        seenHistoryCount: seenHistoryCountRef.current,
+      }))
+    } catch { /* Conversation remains usable if browser storage is unavailable. */ }
+  }, [player.uid, sessionId, messages, input, trace, humanMode, ticketOffer, humanOffer])
 
   /** 进入人工模式前，先拉一次当前历史作为基线，再设 humanMode */
   const enterHumanMode = async () => {
@@ -81,12 +139,14 @@ function ChatPage() {
    */
   useEffect(() => {
     if (!humanMode) return undefined
+    let cancelled = false
 
     const poll = async () => {
       try {
         const res = await apiFetch(`/chat/history/${sessionId}`)
         if (!res.ok) return
         const data = await res.json()
+        if (cancelled) return
         const allMsgs = data.messages || []
 
         const newHumanMsgs = allMsgs
@@ -126,6 +186,7 @@ function ChatPage() {
         const replyRes = await apiFetch(`/chat/reply/${sessionId}`)
         if (replyRes.ok) {
           const replyData = await replyRes.json()
+          if (cancelled) return
           if (replyData.human_active === false) {
             setHumanMode(false)
             if (loadingMsgIdRef.current) {
@@ -143,7 +204,7 @@ function ChatPage() {
 
     poll()
     const timer = setInterval(poll, POLL_INTERVAL)
-    return () => clearInterval(timer)
+    return () => { cancelled = true; clearInterval(timer) }
   }, [humanMode, sessionId])
 
   useEffect(() => {
@@ -156,7 +217,7 @@ function ChatPage() {
     const load = async () => {
       setProfileLoading(true)
       try {
-        const res = await fetch(`${API_BASE}/demo/players`)
+        const res = await demoFetch(`${API_BASE}/demo/players`)
         if (!res.ok) return
         const data = await res.json()
         const fresh = Array.isArray(data)
@@ -189,9 +250,13 @@ function ChatPage() {
     const text = input.trim()
     if (!text || sending) return
 
+    const requestId = lastFailedRef.current?.text === text && lastFailedRef.current.sessionId === sessionId
+      ? lastFailedRef.current.requestId
+      : newRequestId()
+    lastFailedRef.current = null
     const userMsg = { id: Date.now(), role: 'user', content: text }
     const thinkingId = Date.now() + 1
-    const waitingText = humanMode ? '等待客服回复...' : '思考中...'
+    const waitingText = humanMode ? '等待客服回复...' : '正在提交...'
     const thinkingMsg = {
       id: thinkingId,
       role: 'agent',
@@ -203,29 +268,82 @@ function ChatPage() {
     setMessages((prev) => [...prev, userMsg, thinkingMsg])
     setInput('')
     setSending(true)
+    setPhase('connecting')
+    setQueuePosition(null)
+    setStartedAt(Date.now())
+    setTrace(null)
+    setTraceError('')
+    const controller = new AbortController()
+    controllerRef.current = controller
+    let timedOut = false
+    const timeoutId = setTimeout(() => { timedOut = true; controller.abort() }, SEND_TIMEOUT)
+    let streamedText = ''
+    // 失败且尚未输出任何回复时，把问题放回输入框，方便玩家原样重试
+    const allowRetry = () => {
+      if (streamedText) return
+      lastFailedRef.current = { text, requestId, sessionId }
+      setInput((current) => current || text)
+    }
 
     try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), SEND_TIMEOUT)
-
-      const res = await apiFetch('/chat/send', {
+      const res = await apiFetch('/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
           message: text,
+          client_request_id: requestId,
         }),
         signal: controller.signal,
       })
-      clearTimeout(timeoutId)
-
       if (!res.ok) {
         if (res.status === 401) logout()
-        updateAgentMsg(thinkingId, getHttpErrorMessage(res.status), false)
+        const err = await readError(res, getHttpErrorMessage(res.status))
+        setTraceError(traceErrorFor(err.code, res.status))
+        updateAgentMsg(thinkingId, err.message, false)
+        if (res.status !== 401 && res.status !== 403) allowRetry()
         return
       }
 
-      const data = await res.json()
+      let data = null
+      await consumeEvents(res, (event) => {
+        if (event.type === 'queue') {
+          if (event.status === 'queued') {
+            setPhase('queued')
+            setQueuePosition(Number.isInteger(event.position) ? event.position : null)
+            updateAgentMsg(thinkingId, Number.isInteger(event.position) ? `排队中，前面还有 ${event.position - 1} 个问题...` : '排队中...', true)
+          } else if (event.status === 'admitted') {
+            setPhase('running')
+            setQueuePosition(null)
+            updateAgentMsg(thinkingId, '正在处理...', true)
+          }
+        } else if (event.type === 'delta') {
+          streamedText += event.text
+          updateAgentMsg(thinkingId, streamedText, false)
+        } else if (event.type === 'stage') {
+          setTrace((prev) => {
+            const detail = prev?.execution_trace || { stages: [], tools: [], source_count: 0 }
+            const stages = [...detail.stages]
+            if (event.status === 'running') stages.push({ ...event })
+            else {
+              const index = stages.findLastIndex((step) => step.name === event.name && step.status === 'running')
+              if (index !== -1) stages[index] = { ...event }
+            }
+            return { ...prev, execution_trace: { ...detail, stages } }
+          })
+        } else if (event.type === 'tool') {
+          setTrace((prev) => {
+            const detail = prev?.execution_trace || { stages: [], tools: [], source_count: 0 }
+            const tools = [...detail.tools]
+            const index = tools.findIndex((tool) => tool.id === event.id)
+            if (index === -1) tools.push({ ...event })
+            else tools[index] = { ...event }
+            return { ...prev, execution_trace: { ...detail, tools } }
+          })
+        } else if (event.type === 'done') data = event
+      })
+      if (!data) throw new Error('未收到完整回复')
+      setTrace(data.metadata || null)
 
       if (data.status === 'human_chat' || humanMode) {
         loadingMsgIdRef.current = thinkingId
@@ -247,35 +365,79 @@ function ChatPage() {
         setHumanOffer(data.human_offer)
       }
     } catch (err) {
-      const isTimeout = err?.name === 'AbortError'
-      updateAgentMsg(
-        thinkingId,
-        isTimeout
-          ? '响应超时，请确认后端已重启后重试'
-          : '网络异常，请检查后端是否启动',
-        false,
-      )
+      const aborted = err?.name === 'AbortError'
+      if (aborted && !timedOut) {
+        setTraceError('本轮已停止。')
+        updateAgentMsg(thinkingId, streamedText || '已停止本次回复。', false)
+      } else if (aborted) {
+        setTraceError('等待时间过长，本轮未完成。')
+        updateAgentMsg(thinkingId, '等待时间过长，请稍后重试。', false)
+        allowRetry()
+      } else {
+        setTraceError(traceErrorFor(err?.code))
+        updateAgentMsg(
+          thinkingId,
+          err?.partial ? `${streamedText}\n\n（${err.message}）` : err?.message || '网络异常，请稍后重试',
+          false,
+        )
+        if (err?.code !== 'turn_cancelled') allowRetry()
+      }
     } finally {
+      clearTimeout(timeoutId)
+      if (controllerRef.current === controller) controllerRef.current = null
       setSending(false)
+      setPhase('idle')
+      setQueuePosition(null)
     }
   }
 
+  /** 停止当前提交：断开连接后服务端会取消执行并释放排队/执行名额 */
+  const stopSending = () => controllerRef.current?.abort()
+
+  const endConversation = async () => {
+    if (ending || ticketConfirming || humanConfirming) return
+    setEnding(true)
+    controllerRef.current?.abort()
+    try {
+      const response = await apiFetch('/chat/end', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId }),
+      })
+      if (!response.ok) throw new Error((await readError(response, getHttpErrorMessage(response.status))).message)
+      lastFailedRef.current = null
+      setSessionId(newSessionId(player.uid))
+      setMessages(INITIAL_MESSAGES); setInput(''); setTrace(null); setTraceError('')
+      setStartedAt(0); setHumanMode(false); setTicketOffer(null); setHumanOffer(null)
+      seenHistoryCountRef.current = 0; loadingMsgIdRef.current = null
+      message.success('已结束上一段对话，新的对话已开启。工单继续保留。')
+    } catch (error) { message.error(error.message || '结束对话失败，请重试。') }
+    finally { setEnding(false) }
+  }
+
+  // 同一个确认卡片的重试沿用同一请求 ID，服务端据此返回首次结果，不会重复建单或重复转人工
+  const confirmIdsRef = useRef({})
+  const confirmRequestId = (kind, offer, confirmed) => {
+    const key = `${kind}:${sessionId}:${offer?.summary || ''}:${confirmed}`
+    confirmIdsRef.current[key] ||= newRequestId()
+    return confirmIdsRef.current[key]
+  }
+
   const handleTicketConfirm = async (confirmed) => {
+    if (ticketConfirming) return
     setTicketConfirming(true)
     try {
       const res = await apiFetch('/chat/ticket-confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, confirmed }),
+        body: JSON.stringify({ session_id: sessionId, confirmed, client_request_id: confirmRequestId('ticket', ticketOffer, confirmed) }),
       })
       if (!res.ok) {
-        let detail = '操作失败，请稍后重试'
-        try {
-          const err = await res.json()
-          detail = err.detail || err.message || detail
-        } catch {
-          // Keep the generic error when the response is not JSON.
+        const err = await readError(res, '操作失败，请稍后重试')
+        if (res.status === 409 || res.status === 429 || res.status === 503) {
+          message.warning(err.message)
+          return
         }
+        const detail = err.message
         setTicketOffer(null)
         setMessages((prev) => [
           ...prev,
@@ -284,12 +446,13 @@ function ChatPage() {
         return
       }
       const data = await res.json()
-      setTicketOffer(null)
+      // 建单失败时服务端已恢复待确认状态，保留按钮供玩家重试
+      if (data.status !== 'failed') setTicketOffer(null)
 
       const resultMsg = confirmed
         ? data.status === 'created'
           ? `✅ 工单已创建！工单号：${data.ticket_id}，预计处理时间：${data.estimated_response || '3-5个工作日'}`
-          : '工单创建失败，请稍后重试'
+          : '工单创建失败，可再次点击「是」重试'
         : '好的，已取消工单创建。如需帮助随时告知。'
 
       setMessages((prev) => [
@@ -308,21 +471,21 @@ function ChatPage() {
   }
 
   const handleHumanConfirm = async (confirmed) => {
+    if (humanConfirming) return
     setHumanConfirming(true)
     try {
       const res = await apiFetch('/chat/human-confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, confirmed }),
+        body: JSON.stringify({ session_id: sessionId, confirmed, client_request_id: confirmRequestId('human', humanOffer, confirmed) }),
       })
       if (!res.ok) {
-        let detail = '操作失败，请稍后重试'
-        try {
-          const err = await res.json()
-          detail = err.detail || err.message || detail
-        } catch {
-          // Keep the generic error when the response is not JSON.
+        const err = await readError(res, '操作失败，请稍后重试')
+        if (res.status === 409 || res.status === 429 || res.status === 503) {
+          message.warning(err.message)
+          return
         }
+        const detail = err.message
         setHumanOffer(null)
         setMessages((prev) => [
           ...prev,
@@ -365,9 +528,9 @@ function ChatPage() {
   }
 
   const getAvatar = (msg) => {
-    if (msg.role === 'user') return '👤'
-    if (msg.isHuman) return '🧑‍💼'
-    return '🤖'
+    if (msg.role === 'user') return '我'
+    if (msg.isHuman) return '人工'
+    return '✳'
   }
 
   const getSenderLabel = (msg) => {
@@ -378,6 +541,7 @@ function ChatPage() {
 
   return (
     <div className="chat-page">
+      <ExamplePanel uid={player.uid} onUse={setInput} />
       <Card
         className="chat-card"
         title={
@@ -396,9 +560,11 @@ function ChatPage() {
           </span>
         }
         extra={
-          <Button size="small" onClick={() => setProfileOpen(true)}>
-            查看账号
-          </Button>
+          <div className="chat-header-actions">
+            <Button className="profile-button" icon={<UserOutlined aria-hidden="true" />} size="small" onClick={() => setProfileOpen(true)}>查看账号</Button>
+            <Button className="end-conversation-button" icon={<PoweroffOutlined aria-hidden="true" />} size="small" onClick={endConversation} loading={ending}
+              disabled={ticketConfirming || humanConfirming}>结束对话</Button>
+          </div>
         }
       >
         <div className="message-list">
@@ -423,7 +589,7 @@ function ChatPage() {
                       {msg.content}
                     </span>
                   ) : (
-                    msg.content
+                    <ReplyText text={msg.content} />
                   )}
                 </div>
               </div>
@@ -493,24 +659,24 @@ function ChatPage() {
         </div>
 
         <div className="input-area">
-          <Input
+          <Input.TextArea
+            autoSize={{ minRows: 1, maxRows: 4 }}
             value={input}
             placeholder={
               humanMode ? '继续向人工客服描述问题...' : '请输入问题，按 Enter 发送'
             }
             onChange={(e) => setInput(e.target.value)}
-            onPressEnter={handleSend}
+            onPressEnter={(e) => { if (!e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); handleSend() } }}
           />
-          <Button
-            type="primary"
-            onClick={handleSend}
-            disabled={sending}
-            loading={sending}
-          >
-            发送
-          </Button>
+          {sending ? (
+            <Button danger onClick={stopSending} disabled={ending}>停止</Button>
+          ) : (
+            <Button type="primary" onClick={handleSend} disabled={ending}>发送</Button>
+          )}
         </div>
       </Card>
+      <TracePanel trace={trace} sending={sending} phase={phase} queuePosition={queuePosition}
+        startedAt={startedAt} error={traceError} humanMode={humanMode} />
       <Drawer
         title="当前账号"
         placement="right"

@@ -1,4 +1,4 @@
-"""长期记忆：按 user_id 保存历史会话摘要。"""
+"""会话摘要：演示会话单独保存，避免同一测试 UID 的访客共享聊天内容。"""
 
 import json
 import logging
@@ -42,8 +42,8 @@ async def _get_redis():
     return _redis_client if _redis_available else None
 
 
-def _key(user_id: str) -> str:
-    return f"{_PREFIX}{user_id}"
+def _key(user_id: str, session_id: str = "") -> str:
+    return f"{_PREFIX}session:{session_id}:{user_id}" if session_id else f"{_PREFIX}{user_id}"
 
 
 async def save_session_summary(
@@ -65,24 +65,25 @@ async def save_session_summary(
 
     r = await _get_redis()
     if r:
-        key = _key(user_id)
+        key = _key(user_id, session_id)
         await r.lpush(key, json.dumps(entry, ensure_ascii=False))
         await r.ltrim(key, 0, _MAX_ENTRIES - 1)
     else:
-        _memory.setdefault(user_id, []).insert(0, entry)
-        _memory[user_id] = _memory[user_id][:_MAX_ENTRIES]
+        key = _key(user_id, session_id)
+        _memory.setdefault(key, []).insert(0, entry)
+        _memory[key] = _memory[key][:_MAX_ENTRIES]
 
     logger.info("Long-term memory saved for user %s: %s", user_id, summary[:80])
 
 
-async def get_recent_summaries(user_id: str, limit: int = 3) -> list[dict[str, Any]]:
+async def get_recent_summaries(user_id: str, limit: int = 3, session_id: str = "") -> list[dict[str, Any]]:
     """读取用户最近几条历史会话摘要"""
     if not user_id:
         return []
 
     r = await _get_redis()
     if r:
-        raw_list = await r.lrange(_key(user_id), 0, limit - 1)
+        raw_list = await r.lrange(_key(user_id, session_id), 0, limit - 1)
         result = []
         for raw in raw_list:
             try:
@@ -91,12 +92,12 @@ async def get_recent_summaries(user_id: str, limit: int = 3) -> list[dict[str, A
                 continue
         return result
 
-    return _memory.get(user_id, [])[:limit]
+    return _memory.get(_key(user_id, session_id), [])[:limit]
 
 
-async def format_memory_prompt_block(user_id: str, limit: int = 3) -> str:
+async def format_memory_prompt_block(user_id: str, limit: int = 3, session_id: str = "") -> str:
     """格式化为可注入 system prompt 的文本块"""
-    entries = await get_recent_summaries(user_id, limit=limit)
+    entries = await get_recent_summaries(user_id, limit=limit, session_id=session_id)
     if not entries:
         return ""
 

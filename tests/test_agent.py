@@ -71,7 +71,7 @@ async def test_knowledge_error_does_not_propose_ticket_or_human():
 
 
 @pytest.mark.asyncio
-async def test_pure_knowledge_answer_uses_exact_source_quote():
+async def test_knowledge_polish_receives_only_verified_facts():
     from agent.nodes.generate import generate_response_node
 
     quote = "原石可通过每日委托、活动奖励、深渊挑战和商店购买等方式获得。"
@@ -85,10 +85,13 @@ async def test_pure_knowledge_answer_uses_exact_source_quote():
         "sources": [{"text": quote}],
     }}
 
-    with patch("agent.nodes.generate.get_chat_model") as llm:
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(return_value=AIMessage(content=quote + "如果还有其他问题，也可以继续问我。"))
+    with patch("agent.nodes.generate.get_chat_model", return_value=llm):
         response = await generate_response_node(state)
-    assert llm.call_count == 0
-    assert response["final_response"] == quote
+    assert quote in response["final_response"]
+    assert "还可通过邮箱领取" not in llm.ainvoke.call_args.args[0][-1].content
+    assert quote in llm.ainvoke.call_args.args[0][-1].content
 
 
 def test_pdf_line_wrap_does_not_reject_real_quote():
@@ -297,7 +300,7 @@ class TestAgentNodes:
         from app.api.v1.chat import send_message
         from app.api.deps import CurrentPlayer
         from app.models.chat import ChatRequest
-        from fastapi import BackgroundTasks
+        from tests.conftest import make_request
 
         sources = [{"source": "faq.json", "text": "每日委托可获得原石", "score": 0.92}]
         state = create_initial_state("player-1_session", "player-1", "如何获得原石？")
@@ -324,7 +327,7 @@ class TestAgentNodes:
              })):
             response = await send_message(
                 ChatRequest(session_id="player-1_session", message="如何获得原石？"),
-                BackgroundTasks(), CurrentPlayer(user_id="player-1"), MagicMock(),
+                make_request(), CurrentPlayer(user_id="player-1"),
             )
 
         assert response.sources == sources

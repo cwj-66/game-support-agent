@@ -1,5 +1,7 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import { demoFetch } from './access'
+import { createContext, useCallback, useContext, useMemo, useState, useEffect } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
+import { API_BASE } from './config'
 import {
   clearSession,
   getStoredPlayer,
@@ -13,6 +15,19 @@ export function AuthProvider({ children }) {
   const [player, setPlayer] = useState(() =>
     getStoredToken() ? getStoredPlayer() : null,
   )
+
+  useEffect(() => {
+    let cancelled = false
+    if (!getStoredToken()) return undefined
+    demoFetch(`${API_BASE}/demo/players`).then((r) => r.ok ? r.json() : null).then((players) => {
+      if (cancelled || !players) return
+      const stored = getStoredPlayer()
+      const fresh = players.find((p) => p.uid === stored?.uid)
+      if (fresh) { saveSession(getStoredToken(), fresh); setPlayer(fresh) }
+      else { clearSession(); setPlayer(null) }
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const login = useCallback((token, profile) => {
     saveSession(token, profile)

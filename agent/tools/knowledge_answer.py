@@ -9,13 +9,15 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import get_settings
-from app.core.llm import get_chat_model
+from app.core.llm import get_chat_model, llm_invoke
 
 SYSTEM_PROMPT = """You are an enterprise knowledge-base assistant.
 Rules:
 - Answer ONLY using the "Retrieved passages" section. Do not use outside knowledge.
 - If the passages are insufficient to answer, say clearly that the information is not in the provided sources, and briefly say what the passages do contain.
+- For how-to/acquisition questions, include every stated prerequisite, named quest, location and item/chest type from the relevant detailed instructions. Do not stop at a short introduction if a more complete "How to Obtain" passage is present.
 - Do not fabricate citations, page numbers, or facts.
+- Project terminology translations (vocabulary only, not additional facts): Veluriyam Mirage = 琉形蜃境; Secret Summer Paradise = 秘密夏日乐园; The Black Nacre and the All-Devouring Kraken = 黑珍珠与吞噬一切的克拉肯; Precious Chest = 珍贵宝箱. Use these Chinese names for Chinese questions; preserve other proper names unless the passages or question establish their translation.
 - You MUST answer in the same language as the user's question. Never switch languages regardless of the passages' language."""
 
 LANGUAGE_CONSTRAINT = (
@@ -26,7 +28,7 @@ LANGUAGE_CONSTRAINT = (
 QUOTE_FORMAT_INSTRUCTION = (
     "\n\nCRITICAL: Locate the EXACT sentence(s) in the passages that answer the question. "
     "Copy ONLY those key sentences into <QUOTE> tags — do NOT copy entire paragraphs, "
-    "markdown tables, images, or formatting. Quote briefly.\n"
+    "markdown tables, images, or formatting. Include the complete relevant prerequisite sentence when present, not merely an introductory sentence. Quote briefly.\n"
     "If the passages do NOT contain the answer, output <QUOTE></QUOTE> (empty).\n"
     "Then write your answer in <ANSWER> tags. "
     "You MUST close every tag: <QUOTE>...</QUOTE> and <ANSWER>...</ANSWER>."
@@ -119,7 +121,7 @@ async def answer_from_sources(
 
     settings = get_settings()
     llm = get_chat_model(model_name=settings.REASONING_MODEL_NAME)
-    result = await llm.ainvoke([
+    result = await llm_invoke(llm, [
         SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=user_content),
     ])

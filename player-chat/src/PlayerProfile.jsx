@@ -1,4 +1,5 @@
 import { Descriptions, Tag } from 'antd'
+import { DEMO_SCENARIOS } from './demoScenarios'
 
 export const STATUS_META = {
   normal: { text: '正常', color: 'success' },
@@ -14,6 +15,7 @@ export const STATUS_FILTERS = [
 ]
 
 export function scenarioOf(player) {
+  if (DEMO_SCENARIOS[player.uid]) return DEMO_SCENARIOS[player.uid].description
   if (player.status === 'banned') return '可测：解封申诉、账号状态查询'
   if (player.status === 'recharge_abnormal') return '可测：充值未到账、风控核实'
   return '可测：攻略咨询、账号查询、工单'

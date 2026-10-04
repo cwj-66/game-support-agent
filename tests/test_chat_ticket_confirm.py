@@ -17,9 +17,11 @@ async def test_confirm_ticket_reports_database_failure():
     }})
     checkpointer = SimpleNamespace(aget_tuple=AsyncMock(return_value=checkpoint))
     append_reply = AsyncMock()
+    append_state = AsyncMock()
 
     with patch("app.api.v1.chat.get_checkpointer", new=AsyncMock(return_value=checkpointer)), \
          patch("app.core.checkpoint_helper.append_agent_reply", new=append_reply), \
+         patch("app.core.checkpoint_helper.append_session_messages", new=append_state), \
          patch("app.services.ticket_service.create_ticket_core", return_value={
              "status": "failed", "error": "工单创建失败，请稍后重试。",
          }):
@@ -32,3 +34,6 @@ async def test_confirm_ticket_reports_database_failure():
     assert response.ticket_id is None
     assert response.estimated_response is None
     assert "创建失败" in append_reply.await_args.args[1]
+    # 建单前先消费待确认状态，失败后恢复，允许玩家再次确认
+    assert append_state.await_args.kwargs["extra_state"] == {"ticket_offer": None}
+    assert append_reply.await_args.kwargs["ticket_offer"] == {"issue_type": "payment", "summary": "未到账"}

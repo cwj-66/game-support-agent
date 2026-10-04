@@ -1,0 +1,5 @@
+# Incremental code-only update using the already-installed local dependencies.
+# For a fresh install use the repository root Dockerfile.
+FROM game-support-agent-agent-api:latest
+COPY app /app/app
+COPY agent /app/agent

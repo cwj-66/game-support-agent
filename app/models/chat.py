@@ -42,6 +42,11 @@ class ChatRequest(BaseModel):
         default=None,
         description="额外上下文，如用户等级、VIP状态等"
     )
+    client_request_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="客户端生成的幂等键；相同键重试直接返回首次结果",
+    )
 
 
 class ChatResponse(BaseModel):

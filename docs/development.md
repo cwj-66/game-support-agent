@@ -84,7 +84,7 @@ cp .env.example .env
 - `REASONING_MODEL_NAME` / `GENERATE_MODEL_NAME`
 - `GAME_JWT_SECRET`（本地可用 `python scripts/generate_game_token.py --user-id 10001` 测 JWT）
 
-`.env.example` 默认使用 `qwen3.8-max`（推理）、`qwen3.8-flash`（润色）和 `qwen3.8-max-0902`（评测裁判）；实际运行以本机 `.env` 或容器环境变量为准。当前 `get_chat_model()` 使用 DashScope 兼容接口及 `DASHSCOPE_API_KEY`，只填写 `OPENAI_API_KEY` 并不会自动切换模型提供方。
+`.env.example` 默认使用 `qwen3.8-max-0902`（推理）、`qwen3.8-flash`（润色）和 `deepseek-v4.1-flash`（评测裁判）；实际运行以本机 `.env` 或容器环境变量为准。当前 `get_chat_model()` 使用 DashScope 兼容接口及 `DASHSCOPE_API_KEY`，只填写 `OPENAI_API_KEY` 并不会自动切换模型提供方。
 
 ### 2. 启动基础依赖
 
@@ -183,6 +183,16 @@ GET   /api/v1/human/history/{session_id}
 
 客服通过 `continue` 多轮对话，`close` 结束接待。消息直接写入 LangGraph checkpoint。
 
+### 并发与幂等约定
+
+- 修改会话状态的入口（`send`、`stream`、`ticket-confirm`、`human-confirm`、`end`、客服 `review`/`join`、空闲自动关闭）都先取 Redis 会话锁 `gsa:session-lock:{session_id}`。锁按会话号加，不按 UID；前端会话号为 `{uid}_{uuid}`。
+- 同一会话已有问答在执行时，新提交返回 409 `session_busy`；`end` 会发出取消标记，等待最多 8 秒让进行中的问答退出后再关闭。
+- 聊天与确认请求可带 `client_request_id`（8–64 位字母数字、`-`、`_`），`/ticket/create`、`/ticket/submit` 使用 `Idempotency-Key` 头；相同 ID 在 10 分钟内重试会直接返回首次结果。
+- 只有调用模型的路径（`send`/`stream` 正常模式、`/ticket/submit`）占全站名额；SSE 事件新增 `queue`（`queued` 带真实排队位置 / `admitted`）、心跳注释 `: ping` 和带 `code` 的 `error`。
+- 错误码：429 `rate_limited`、409 `session_busy` / `turn_cancelled`、503 `server_busy` / `queue_timeout` / `capacity_unavailable` / `upstream_unavailable`、504 `agent_timeout`，均带 `Retry-After`（`turn_cancelled` 除外）。
+- 本机没有 Redis 时可在 `.env` 设 `COORDINATION_BACKEND=memory`（仅单进程）。测试默认使用 memory，并通过 `fakeredis[lua]` 执行真实 Lua 脚本（`pip install -r requirements-dev.txt`）。
+- 模拟云端压测：`python scripts/load_test_mock.py`（不消耗真实 token，结果写入 `deploy/vultr/concurrency-results.json`）。
+
 ## Eval Framework
 
 ### 评测类别
@@ -198,7 +208,7 @@ GET   /api/v1/human/history/{session_id}
 ### 三段式评分
 
 1. **硬评分**：`tool_score` / `escalation_score` / `forbidden_score`
-2. **内容 LLM-as-Judge**：默认 `qwen3.8-max-0902`（可用 `JUDGE_FALLBACK_MODEL` 覆盖）评估信息点覆盖；调用失败时降级关键词匹配
+2. **内容 LLM-as-Judge**：默认 `deepseek-v4.1-flash`（可用 `JUDGE_FALLBACK_MODEL` 覆盖）评估信息点覆盖；调用失败时降级关键词匹配
 3. **综合评分**：正常场景 工具30% + 升等15% + 禁止25% + 内容30%；升等场景 工具45% + 升等35% + 禁止20%
 
 报告输出 CSV + Markdown + JSON，含逐题明细和低分分析；生成报告保留在本机，默认不提交到仓库。评分基于测试账号的数据库记录和已入库的内部知识文档，不使用网上答案补齐参考答案。分数仅代表这 27 道题及当次服务、模型和知识库状态，不等于生产环境准确率。最近一次实测摘要见 [评测记录](evaluation.md)。
@@ -343,7 +353,7 @@ X-API-Key: <optional>
 |------|------|
 | AI 编排 | LangGraph / langchain-core / langchain-openai |
 | LLM | DashScope 兼容接口；模型由 `REASONING_MODEL_NAME` / `GENERATE_MODEL_NAME` 配置 |
-| 评测 | LLM-as-Judge 默认 `qwen3.8-max-0902` |
+| 评测 | LLM-as-Judge 默认 `deepseek-v4.1-flash` |
 | API 服务 | FastAPI + Pydantic |
 | 客户端 | React + Vite + Ant Design + rich CLI |
 | 持久化 | SQLite（Agent 状态）+ Redis（待接待队列）+ MySQL（工单/账号 + 知识库元数据）+ Qdrant（向量） |

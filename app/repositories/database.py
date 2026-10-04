@@ -160,6 +160,8 @@ def update_ticket(
         params.append(status)
         if status == "resolved":
             sets.append("resolved_at = NOW()")
+        else:
+            sets.append("resolved_at = NULL")
     if priority is not None:
         sets.append("priority = %s")
         params.append(priority)

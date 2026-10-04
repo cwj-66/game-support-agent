@@ -33,7 +33,7 @@ from langchain_core.messages import ToolMessage
 
 EVAL_DIR = Path(__file__).parent
 REPORT_PATH = EVAL_DIR / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-JUDGE_FALLBACK_MODEL = os.getenv("JUDGE_FALLBACK_MODEL", "qwen3.8-max-0902")
+JUDGE_FALLBACK_MODEL = os.getenv("JUDGE_FALLBACK_MODEL", "deepseek-v4.1-flash")
 JUDGE_TIMEOUT = 30
 
 
