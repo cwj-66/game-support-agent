@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import sqlite3
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -32,8 +33,13 @@ def authenticated(request):
     try:
         payload = jwt.decode(request.cookies.get(COOKIE, ""), secret, algorithms=["HS256"],
                              audience="game-support-demo", options={"require": ["exp", "sub", "aud"]})
+        from app.services.visitor_quota import managed, get_store
+        if managed():
+            state = get_store().state(payload.get('vid', ''))
+            if not state or state['blocked']:
+                return False
         return payload.get("sub") == "demo-reviewer"
-    except jwt.PyJWTError:
+    except (jwt.PyJWTError, OSError, sqlite3.Error):
         return False
 
 
@@ -110,11 +116,19 @@ class AccessLogin(BaseModel):
 
 @router.get("/status")
 async def status(request: Request):
-    return {"authenticated": authenticated(request) or not enabled(), "required": enabled()}
+    from app.services.visitor_quota import managed, quota_state
+    allowed = authenticated(request) or not enabled()
+    result = {"authenticated": allowed, "required": enabled(), "portal_managed": managed()}
+    if managed() and allowed:
+        result['quota'] = await quota_state(request)
+    return result
 
 
 @router.post("/session")
 async def login(body: AccessLogin, request: Request, response: Response):
+    from app.services.visitor_quota import managed
+    if managed():
+        raise HTTPException(401, '请在作品集首页输入手机号后四位登录')
     if not enabled():
         return {"authenticated": True}
     from app.core.client_ip import client_ip

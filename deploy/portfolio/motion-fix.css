@@ -1,0 +1,17 @@
+/* Keep content visible: the shared motion module owns section movement. */
+.screen-slide,
+.screen-slide[data-direction],
+.screen-slide.is-leaving-next,
+.screen-slide.is-leaving-previous,
+.screen-slide .hero>div:first-child,
+.experience-page-title,
+.screen-project,
+.screen-slide .slide-summary,
+.screen-slide .experience-overview,
+.screen-slide .experience-points,
+.screen-slide .evidence,
+.screen-slide .evidence-pair,
+.screen-slide .git-evidence-grid,
+.screen-slide .outcome-grid,
+.screen-slide .reflection-grid,
+.login-card,.login-intro,.case-section,.detail-hero{animation:none!important}

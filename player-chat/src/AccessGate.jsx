@@ -10,12 +10,20 @@ export default function AccessGate({ children }) {
   const [error, setError] = useState('')
   useEffect(() => {
     let cancelled = false
+    let portalManaged = false
     fetch(`${API_BASE}/access/status`, { credentials: 'same-origin', cache: 'no-store' })
       .then((r) => { if (!r.ok) throw new Error(); return r.json() })
-      .then((data) => { if (!cancelled) setAllowed(data.authenticated) })
+      .then((data) => {
+        portalManaged = data.portal_managed
+        if (!cancelled && portalManaged && !data.authenticated) window.location.replace('/login')
+        if (!cancelled) setAllowed(data.authenticated)
+      })
       .catch(() => { if (!cancelled) setError('暂时无法连接演示，请稍后刷新。') })
       .finally(() => { if (!cancelled) setChecking(false) })
-    const expired = () => { setAllowed(false); setError('访问已过期，请重新输入密码。') }
+    const expired = () => {
+      if (portalManaged) { window.location.replace('/login'); return }
+      setAllowed(false); setError('访问已过期，请重新输入密码。')
+    }
     window.addEventListener('demo-access-expired', expired)
     return () => { cancelled = true; window.removeEventListener('demo-access-expired', expired) }
   }, [])
@@ -39,9 +47,9 @@ export default function AccessGate({ children }) {
   return <main className="access-screen"><form className="access-card" onSubmit={login}>
     <div className="panel-eyebrow">PORTFOLIO / 作品集</div>
     <h1>欢迎查看我的作品集</h1>
-    <p>请输入项目作者简历中手机号的后 6 位。</p>
-    <Input.Password autoComplete="current-password" aria-label="演示访问密码" value={password}
-      onChange={(e) => setPassword(e.target.value)} placeholder="输入 6 位访问密码" maxLength={128} />
+    <p>请输入项目作者简历中手机号的后四位。</p>
+    <Input.OTP length={4} type="text" size="large" aria-label="四位演示访问密码" value={password}
+      onChange={setPassword} />
     {error && <p className="access-error" role="alert">{error}</p>}
     <Button type="primary" htmlType="submit" block loading={busy}>进入演示</Button>
     <small>验证后可浏览作品，并进入项目体验。</small>

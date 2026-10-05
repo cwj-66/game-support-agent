@@ -84,7 +84,7 @@ cp .env.example .env
 - `REASONING_MODEL_NAME` / `GENERATE_MODEL_NAME`
 - `GAME_JWT_SECRET`（本地可用 `python scripts/generate_game_token.py --user-id 10001` 测 JWT）
 
-`.env.example` 默认使用 `qwen3.8-max-0902`（推理）、`qwen3.8-flash`（润色）和 `deepseek-v4.1-flash`（评测裁判）；实际运行以本机 `.env` 或容器环境变量为准。当前 `get_chat_model()` 使用 DashScope 兼容接口及 `DASHSCOPE_API_KEY`，只填写 `OPENAI_API_KEY` 并不会自动切换模型提供方。
+`.env.example` 默认使用 `qwen3.8-flash`（推理及知识抽取）、`qwen3.7-flash`（润色）和 `deepseek-v4.1-flash`（评测裁判）；实际运行以本机 `.env` 或容器环境变量为准。当前 `get_chat_model()` 使用 DashScope 兼容接口及 `DASHSCOPE_API_KEY`，只填写 `OPENAI_API_KEY` 并不会自动切换模型提供方。
 
 ### 2. 启动基础依赖
 

@@ -39,6 +39,7 @@ from app.services.human_chat import (
     is_human_mode,
 )
 from app.services.rate_limit import enforce_chat_rate
+from app.services.visitor_quota import reserve_chat_quota
 from app.services.session_lock import (
     acquire_session_lock,
     clear_cancel,
@@ -154,16 +155,18 @@ async def send_message(
             return ChatResponse(**cached)
 
         if await _human_mode_active(request.session_id):
+            await reserve_chat_quota(http_request, request.session_id, request_id)
             response = await _send_human_message(request.session_id, request.message, start)
         else:
             ticket = AdmissionTicket()
             try:
                 await ticket.wait(cancelled=lambda: guard.cancel_requested)
+                await reserve_chat_quota(http_request, request.session_id, request_id)
                 result = await execute_with_deadline(
                     run_agent(session_id=request.session_id, user_id=player.user_id, user_query=request.message),
                     guard,
                 )
-            except AppException:
+            except (AppException, HTTPException):
                 raise
             except Exception as exc:
                 logger.warning("agent turn failed for %s: %s", request.session_id, type(exc).__name__)
@@ -348,6 +351,7 @@ async def stream_chat(
             if not human:
                 ticket = AdmissionTicket()
                 await ticket.attempt()
+            await reserve_chat_quota(http_request, session_id, request_id)
     except BaseException:
         if ticket is not None:
             await ticket.release()

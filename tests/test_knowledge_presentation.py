@@ -37,3 +37,28 @@ async def test_knowledge_polish_preserves_full_grounded_answer_and_uses_generati
     assert answer in model.ainvoke.call_args.args[0][-1].content
     assert '其他游戏问题' in result['final_response']
     assert result['metadata']['reply_generation']['mode'] == 'customer_service_polish'
+@pytest.mark.asyncio
+async def test_failed_retrieval_candidate_cannot_leak_into_follow_up_models():
+    import json
+    from langchain_core.messages import ToolMessage, HumanMessage
+    from agent.nodes.reasoning import reasoning_node
+    from agent.nodes.generate import generate_response_node
+    from agent.state import create_turn_input
+    candidate = '未经核实的秘密任务步骤'
+    rejected = ToolMessage(name='query_knowledge', tool_call_id='bad-evidence', content=json.dumps({
+        'has_answer': False, 'answer': candidate, 'source_quote': candidate,
+        'sources': [{'text': candidate}], 'confidence': 0.2,
+    }, ensure_ascii=False))
+    state = create_turn_input('10001_regression', '10001', '刚才那个怎么获得？')
+    state['messages'] = [rejected, AIMessage(content='没有足够依据'), HumanMessage(content=state['user_query'])]
+    model = AsyncMock()
+    model.bind_tools = lambda tools: model
+    model.ainvoke.return_value = AIMessage(content='没有足够依据，无法确认。')
+    with patch('agent.nodes.reasoning.get_chat_model', return_value=model), patch('agent.nodes.reasoning.get_all_tools', return_value=[]):
+        await reasoning_node(state)
+    assert candidate not in '\n'.join(str(m.content) for m in model.ainvoke.call_args.args[0])
+    model.reset_mock()
+    with patch('agent.nodes.generate.get_chat_model', return_value=model):
+        await generate_response_node(state)
+    assert candidate not in '\n'.join(str(m.content) for m in model.ainvoke.call_args.args[0])
+    assert candidate in rejected.content

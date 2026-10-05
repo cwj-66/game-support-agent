@@ -1,4 +1,4 @@
-import { startMotion } from './motion-core.js?v=20261005b'
+import { startMotion } from './motion-core.js?v=20261005c'
 
 let stop = startMotion()
 window.addEventListener('pagehide', () => stop())

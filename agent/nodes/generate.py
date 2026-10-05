@@ -16,7 +16,7 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 from langgraph.config import get_config
 from ..events import emit_event
-from ..tools.knowledge_answer import _quote_matches_source
+from ..tools.knowledge_answer import _quote_matches_source, verified_knowledge_history
 
 
 def _same_language_quote(question: str, quote: str) -> bool:
@@ -120,7 +120,7 @@ async def generate_response_node(state: AgentState) -> Dict[str, Any]:
 
         final_response = await _generate_text(llm, [
             SystemMessage(content=CUSTOMER_SERVICE_PROMPT),
-            *messages,
+            *verified_knowledge_history(messages),
             HumanMessage(content=(
                 f"请根据以上已经执行的工具结果和决策，完整回答玩家本轮问题：{state.get('user_query', '')}。"
                 "直接输出给玩家的最终回复，明确告知查到的状态、原因或处理结果；"

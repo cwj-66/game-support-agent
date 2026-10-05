@@ -36,7 +36,7 @@ def _shared_http_client() -> httpx.AsyncClient:
 def get_chat_model(model_name: Optional[str] = None) -> ChatOpenAI:
     """返回指定模型的共享实例；SDK 自带重试关闭，统一由 guarded_call 控制。"""
     settings = get_settings()
-    model = model_name or settings.REASONING_MODEL_NAME or "qwen3.8-max-0902"
+    model = model_name or settings.REASONING_MODEL_NAME or "qwen3.8-flash"
     http_client = _shared_http_client()
     if model not in _models:
         extra_body = (

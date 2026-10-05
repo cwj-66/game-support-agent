@@ -8,9 +8,9 @@ export function startMotion(root = document) {
   const selector = '.agent-section,.agent-summary,.feature-item,.explain-panel,.evidence-card,.react-diagram,.tech-wrap,.capacity-numbers,.protection-grid article,.try-path article,.agent-bottom,.hero,.home-detail,.experience-page-title,.slide-heading,.slide-summary,.editorial-grid,.story-section,.agent-flow,.experience-points,.evidence,.outcome-grid,.reflection-grid,.account-card,.tickets-header,.ticket-card'
   const play = (element, distance = 24, delay = 0) => {
     const animation = element.animate([
-      { opacity: 0, transform: `translateY(${distance}px)` },
-      { opacity: 1, transform: 'translateY(0)' },
-    ], { duration: 600, delay, easing: 'cubic-bezier(.22,1,.36,1)' })
+      { transform: `translateY(${distance}px)` },
+      { transform: 'translateY(0)' },
+    ], { duration: 450, delay, fill: 'backwards', easing: 'cubic-bezier(.22,1,.36,1)' })
     animations.add(animation)
     animation.finished.then(() => animations.delete(animation), () => animations.delete(animation))
   }

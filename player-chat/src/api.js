@@ -42,16 +42,17 @@ export async function readError(res, fallback) {
   try { body = await res.json() } catch { /* 非 JSON 响应使用兜底文案 */ }
   const retryAfter = Number(res.headers.get('Retry-After')) || null
   const detail = typeof body.detail === 'string' ? body.detail : ''
-  return { code: body.error_code || '', message: body.message || detail || fallback, retryAfter, status: res.status }
+  return { code: body.error_code || (detail.includes('额度已用完') ? 'quota_exhausted' : ''), message: body.message || detail || fallback, retryAfter, status: res.status }
 }
 
 export async function apiFetch(path, options = {}) {
   const { headers, ...rest } = options
-  return demoFetch(`${API_BASE}${path}`, {
+  const response = await demoFetch(`${API_BASE}${path}`, {
     ...rest,
     headers: {
       ...authHeaders(),
       ...headers,
     },
   })
+  return response
 }

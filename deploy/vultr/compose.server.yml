@@ -147,7 +147,8 @@ services:
       MCP_SERVER_URL: http://mcp-server:8001
       REDIS_URL: redis://redis:6379/0
       DB_PATH: /app/data/game_support_docker.db
-    volumes: ["./data:/app/data", "./logs:/app/logs"]
+      DEMO_VISITOR_DB_PATH: /app/visitor-data/visitors.sqlite3
+    volumes: ["./data:/app/data", "./logs:/app/logs", "/var/lib/chenwj-visitors:/app/visitor-data"]
     depends_on:
       mcp-server: {condition: service_healthy}
       redis: {condition: service_healthy}

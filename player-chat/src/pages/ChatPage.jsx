@@ -27,6 +27,7 @@ const getHttpErrorMessage = (status) => {
 
 /** 失败后右侧状态：区分服务繁忙、排队超时、频率限制等真实原因 */
 const traceErrorFor = (code, status) => {
+  if (code === 'quota_exhausted') return '对话体验额度已用完。'
   if (code === 'server_busy' || code === 'capacity_unavailable') return '服务繁忙，本轮未进入处理。'
   if (code === 'queue_timeout') return '排队等待超时，本轮未开始处理。'
   if (code === 'rate_limited' || status === 429) return '提问太频繁，本轮未提交。'

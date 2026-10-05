@@ -38,11 +38,11 @@ class Settings(BaseSettings):
         description="可选 OpenAI API Key；当前 LLM 调用仍使用 DashScope 兼容接口",
     )
     REASONING_MODEL_NAME: str = Field(
-        default="qwen3.8-max-0902",
+        default="qwen3.8-flash",
         description="reasoning 推理节点使用的 LLM 模型",
     )
     GENERATE_MODEL_NAME: str = Field(
-        default="qwen3.8-flash",
+        default="qwen3.7-flash",
         description="generate 润色节点使用的轻量模型",
     )
     LLM_BASE_URL: Optional[str] = Field(

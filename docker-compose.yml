@@ -143,8 +143,8 @@ services:
       - RAG_API_KEY=${RAG_API_KEY:-dev-rag-key}
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-max-0902}
-      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen3.8-flash}
+      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-flash}
+      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen3.7-flash}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - MYSQL_HOST=mysql
       - MYSQL_PORT=3306
@@ -189,8 +189,8 @@ services:
       - DB_PATH=/app/data/game_support_docker.db
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-max-0902}
-      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen3.8-flash}
+      - REASONING_MODEL_NAME=${REASONING_MODEL_NAME:-qwen3.8-flash}
+      - GENERATE_MODEL_NAME=${GENERATE_MODEL_NAME:-qwen3.7-flash}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - DEMO_ACCESS_PASSWORD_HASH=${DEMO_ACCESS_PASSWORD_HASH:-}
       - DEMO_ACCESS_SECRET=${DEMO_ACCESS_SECRET:-}

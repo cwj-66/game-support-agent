@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 from ..state import AgentState
 from ..tools import get_all_tools
 from ..prompts.system import GAME_SUPPORT_SYSTEM_PROMPT
+from ..tools.knowledge_answer import verified_knowledge_history
 from app.core.config import get_settings
 from app.core.llm import get_chat_model, llm_invoke
 
@@ -74,7 +75,7 @@ async def reasoning_node(state: AgentState) -> Dict[str, Any]:
 
     llm_messages = [
         SystemMessage(content=system_prompt),
-        *history,
+        *verified_knowledge_history(history),
     ]
 
     llm = _build_llm_from_settings()

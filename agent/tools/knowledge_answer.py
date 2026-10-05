@@ -4,12 +4,31 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import json
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from app.core.config import get_settings
 from app.core.llm import get_chat_model, llm_invoke
+
+def verified_knowledge_history(messages: list) -> list:
+    """保留原始审计记录，但不让失败检索的候选答案进入后续模型上下文。"""
+    safe = []
+    for message in messages:
+        if isinstance(message, ToolMessage) and message.name == "query_knowledge":
+            try:
+                result = json.loads(message.content)
+            except (TypeError, ValueError):
+                result = None
+            if isinstance(result, dict) and result.get("has_answer") is False:
+                message = message.model_copy(update={"content": json.dumps({
+                    "has_answer": False,
+                    "message": "该次检索未通过证据校验，没有可确认的答案。后续追问需要重新检索，不能宣称已经查实。",
+                }, ensure_ascii=False)})
+        safe.append(message)
+    return safe
+
 
 SYSTEM_PROMPT = """You are an enterprise knowledge-base assistant.
 Rules:
